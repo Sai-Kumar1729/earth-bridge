@@ -528,83 +528,18 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             else:
                 print(f"[earth-bridge] GEE compute returned note: {gee_result.get('message')}")
 
-        # 2. MODIS Tree Canopy Cover (TCC) via Microsoft Planetary Computer (Zero Auth)
-        if index_type in ['modis_tcc', 'tcc']:
-            print(f"[earth-bridge] Streaming MODIS Tree Canopy Cover (TCC) from Planetary Computer / NASA for {city_name}...")
-            result = stac_engine.fetch_modis_tcc_from_mpc(bbox=bbox)
-            
-            self._send_success_response({
-                "status": result.get("status", "success"),
-                "provider": result.get("provider", "Microsoft Planetary Computer"),
-                "tile_url": result.get("tile_url"),
-                "stats": result.get("stats", {}),
-                "layer_name": result.get("layer_name", "MODIS Tree Canopy Cover (250m)"),
-                "city": city_name,
-                "message": result.get("message")
-            })
-            return
-
-        # 3. MODIS True Color / RGB Stream
-        if index_type in ['modis_true_color', 'modis_rgb']:
-            print(f"[earth-bridge] Fetching MODIS True Color for {city_name}...")
-            if gee_engine.initialized:
-                result = gee_engine.compute_modis_true_color(bbox=bbox)
-            else:
-                result = {
-                    "status": "success",
-                    "provider": "NASA GIBS (MODIS 250m True Color)",
-                    "tile_url": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/2024-05-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg",
-                    "stats": {"resolution": "250m", "composite": "NASA GIBS Global True Color"},
-                    "layer_name": "MODIS Terra 250m True Color"
-                }
-            
-            self._send_success_response({
-                "status": result.get("status", "success"),
-                "provider": result.get("provider"),
-                "tile_url": result.get("tile_url"),
-                "stats": result.get("stats", {}),
-                "layer_name": result.get("layer_name", "MODIS True Color (500m)"),
-                "city": city_name
-            })
-            return
-
-        # 4. LST Climatology Anomaly
-        if index_type in ['lst_anomaly', 'lst']:
-            print("[earth-bridge] Triggering GEE LST Computation...")
-            if gee_engine.initialized:
-                result = gee_engine.compute_lst_climatology_anomaly(bbox=bbox)
-            else:
-                result = {
-                    "status": "success",
-                    "provider": "NASA GIBS (MODIS Land Surface Temp 1km)",
-                    "tile_url": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Day/default/2024-05-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png",
-                    "stats": {"mean_anomaly_celsius": 1.4, "max": 4.2, "min": -1.1},
-                    "layer_name": "MODIS Land Surface Temp (1km)"
-                }
-            
-            self._send_success_response({
-                "status": result.get("status", "success"),
-                "provider": result.get('provider', 'GEE'),
-                "tile_url": result.get('tile_url'),
-                "stats": result.get('stats', {}),
-                "layer_name": "LST Thermal Anomaly (1km)",
-                "city": city_name
-            })
-            return
-
-        # 5. Open STAC Stream Fallback (when GEE not connected)
-        print(f"[earth-bridge] Streaming open STAC raster for {index_type}...")
-        raster_result = stac_engine.fetch_raster_for_bbox(bbox, index_type=index_type)
-        provider = raster_result.get('provider', 'Microsoft Planetary Computer')
+        # 2. Universal Open Satellite Stream (MPC STAC + NASA GIBS)
+        print(f"[earth-bridge] Streaming open satellite data for {index_type.upper()} ({city_name})...")
+        open_result = stac_engine.fetch_open_satellite_stream(bbox=bbox, index_type=index_type)
         
         self._send_success_response({
-            "status": "success",
+            "status": open_result.get("status", "success"),
             "city": city_name,
-            "provider": provider,
-            "tile_url": raster_result.get("tile_url"),
-            "stats": raster_result.get("stats", {"mean": 0.52, "min": 0.1, "max": 0.85}),
-            "layer_name": f"{index_type.upper()} Satellite Layer",
-            "message": "To compute with Google Earth Engine cloud cluster, click 'Connect GEE' in the top bar."
+            "provider": open_result.get("provider", "Microsoft Planetary Computer / NASA GIBS"),
+            "tile_url": open_result.get("tile_url"),
+            "stats": open_result.get("stats", {}),
+            "layer_name": open_result.get("layer_name", f"{index_type.upper()} Satellite Stream"),
+            "message": "Streamed from open satellite data. Connect GEE in top bar for server-side cloud compute."
         })
 
     def _send_success_response(self, data):
