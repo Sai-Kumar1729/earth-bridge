@@ -134,7 +134,6 @@ let layerColorIndex = 0;
 let drawnShapeLayer = null;
 let drawnShapeCount = 1;
 let latestRoiGeoJson = null;
-let roiMaskLayer = null;
 
 const LAYER_COLORS = [
   '#38bdf8', // Sky blue
@@ -150,84 +149,6 @@ function getNextLayerColor() {
   const color = LAYER_COLORS[layerColorIndex % LAYER_COLORS.length];
   layerColorIndex++;
   return color;
-}
-
-function extractRingsFromGeom(geom, holesArray) {
-  if (!geom) return;
-  if (geom.type === 'Polygon') {
-    if (geom.coordinates && geom.coordinates.length > 0) {
-      holesArray.push(geom.coordinates[0]);
-    }
-  } else if (geom.type === 'MultiPolygon') {
-    if (geom.coordinates) {
-      geom.coordinates.forEach(polyCoords => {
-        if (polyCoords && polyCoords.length > 0) {
-          holesArray.push(polyCoords[0]);
-        }
-      });
-    }
-  }
-}
-
-function applyRoiInvertedMask(geojsonGeometry) {
-  if (roiMaskLayer && map.hasLayer(roiMaskLayer)) {
-    map.removeLayer(roiMaskLayer);
-    roiMaskLayer = null;
-  }
-  
-  if (!geojsonGeometry) return;
-  
-  try {
-    // World boundary box [-180, -90] to [180, 90]
-    const worldPolygon = [
-      [-180, -90],
-      [180, -90],
-      [180, 90],
-      [-180, 90],
-      [-180, -90]
-    ];
-    
-    let holes = [];
-    
-    if (geojsonGeometry.type === 'FeatureCollection') {
-      geojsonGeometry.features.forEach(feat => {
-        extractRingsFromGeom(feat.geometry, holes);
-      });
-    } else if (geojsonGeometry.type === 'Feature') {
-      extractRingsFromGeom(geojsonGeometry.geometry, holes);
-    } else {
-      extractRingsFromGeom(geojsonGeometry, holes);
-    }
-    
-    if (holes.length === 0) return;
-    
-    const maskFeature = {
-      type: "Feature",
-      geometry: {
-        type: "Polygon",
-        coordinates: [worldPolygon, ...holes]
-      }
-    };
-    
-    roiMaskLayer = L.geoJSON(maskFeature, {
-      style: {
-        fillColor: '#0b0f14',
-        fillOpacity: 0.96,
-        stroke: false,
-        weight: 0,
-        interactive: false
-      }
-    }).addTo(map);
-    
-    // Bring boundaries to front
-    Object.values(uploadedLayers).forEach(item => {
-      if (item.layer && map.hasLayer(item.layer)) {
-        item.layer.bringToFront();
-      }
-    });
-  } catch (err) {
-    console.warn("Mask error:", err);
-  }
 }
 
 function handleDrawnShape(layer, shapeType = 'Polygon') {
@@ -904,10 +825,8 @@ async function runMasterCompute() {
       // Store in index layers registry
       indexLayers[indexType] = tileLayer;
       
-      // Apply inverted polygon mask so satellite layer is strictly inside the ROI
-      if (latestRoiGeoJson) {
-        applyRoiInvertedMask(latestRoiGeoJson);
-      }
+      // Auto-fit map view to exact ROI
+      map.fitBounds(roiBounds);
       
       // Bring all uploaded boundary layers to front
       Object.values(uploadedLayers).forEach(item => {

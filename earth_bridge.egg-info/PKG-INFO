@@ -1,12 +1,12 @@
 Metadata-Version: 2.4
 Name: earth-bridge
-Version: 0.1.0
+Version: 0.2.0
 Summary: Open Earth Data & Cross-Cloud STAC Engine bridging Google Earth Engine, Microsoft Planetary Computer, and Overture Maps Foundation.
 Author-email: Open GeoAI Developer <developer@opengeo.ai>
 License-Expression: MIT
-Project-URL: Homepage, https://github.com/open-geo/earth-bridge
-Project-URL: Documentation, https://github.com/open-geo/earth-bridge#readme
-Project-URL: Repository, https://github.com/open-geo/earth-bridge.git
+Project-URL: Homepage, https://github.com/Sai-Kumar1729/earth-bridge
+Project-URL: Documentation, https://github.com/Sai-Kumar1729/earth-bridge/blob/main/README.md
+Project-URL: Repository, https://github.com/Sai-Kumar1729/earth-bridge
 Keywords: gis,earth-observation,google-earth-engine,planetary-computer,overture-maps,stac,remote-sensing,rasterio,geopandas
 Description-Content-Type: text/markdown
 License-File: LICENSE

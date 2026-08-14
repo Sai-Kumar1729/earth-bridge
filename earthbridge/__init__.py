@@ -5,7 +5,7 @@ Open Earth Data & Cross-Cloud STAC Engine
 Bridging Google Earth Engine, Microsoft Planetary Computer, and Overture Maps Foundation.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .gee_engine import GEEOperationEngine
 from .stac_engine import ProductionSTACEngine
