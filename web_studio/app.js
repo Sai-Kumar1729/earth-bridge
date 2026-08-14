@@ -949,23 +949,22 @@ function updateDashboard(data, indexLabel) {
   
   let statsObj = data.stats || {};
   
-  // Format Tree Canopy Cover percentages
-  if (statsObj.Percent_Tree_Cover_mean !== undefined) {
+  // 1. If real numeric statistical aggregation was computed (GEE reduceRegion or COG pixel arrays)
+  if (statsObj.mean !== undefined && typeof statsObj.mean === 'number') {
+    document.getElementById('statMean').textContent = statsObj.mean.toFixed(3);
+    const minStr = statsObj.min !== undefined ? statsObj.min.toFixed(2) : '-';
+    const maxStr = statsObj.max !== undefined ? statsObj.max.toFixed(2) : '-';
+    document.getElementById('statRange').textContent = `${minStr} — ${maxStr}`;
+  } else if (statsObj.Percent_Tree_Cover_mean !== undefined && typeof statsObj.Percent_Tree_Cover_mean === 'number') {
     document.getElementById('statMean').textContent = `${statsObj.Percent_Tree_Cover_mean.toFixed(1)}% Canopy`;
     document.getElementById('statRange').textContent = `${statsObj.min.toFixed(0)}% — ${statsObj.max.toFixed(0)}%`;
+  } else if (statsObj.resolution) {
+    // 2. Real Tile Stream Metadata (Resolution, Acquisition Date, Scene ID)
+    document.getElementById('statMean').textContent = statsObj.resolution;
+    document.getElementById('statRange').textContent = statsObj.datetime ? new Date(statsObj.datetime).toLocaleDateString() : 'Continuous Stream';
   } else {
-    let meanKey = Object.keys(statsObj).find(k => k.includes('mean')) || Object.keys(statsObj)[0];
-    if (meanKey && typeof statsObj[meanKey] === 'number') {
-      document.getElementById('statMean').textContent = statsObj[meanKey].toFixed(3);
-    } else {
-      document.getElementById('statMean').textContent = statsObj.resolution || 'Live Cloud';
-    }
-    
-    if (statsObj.min !== undefined && statsObj.max !== undefined) {
-      document.getElementById('statRange').textContent = `${statsObj.min.toFixed(2)} / ${statsObj.max.toFixed(2)}`;
-    } else {
-      document.getElementById('statRange').textContent = statsObj.composite_period || 'Continuous';
-    }
+    document.getElementById('statMean').textContent = 'Active Stream';
+    document.getElementById('statRange').textContent = 'Cloud XYZ';
   }
 
   // Populate Table

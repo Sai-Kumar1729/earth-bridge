@@ -140,7 +140,9 @@ class ProductionSTACEngine:
             if not is_large_region:
                 features = self._rest_search_mpc("modis-13Q1-061", bbox)
                 if features:
-                    item_id = features[0].get("id")
+                    feat = features[0]
+                    item_id = feat.get("id")
+                    props = feat.get("properties", {})
                     tile_url = (
                         f"https://planetarycomputer.microsoft.com/api/data/v1/item/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}@1x"
                         f"?collection=modis-13Q1-061&item={item_id}&assets=250m_16_days_NDVI&rescale=1000,8000&colormap_name=greens"
@@ -149,14 +151,23 @@ class ProductionSTACEngine:
                         "status": "success",
                         "provider": f"Planetary Computer (MODIS 250m — {item_id[:24]}...)",
                         "tile_url": tile_url,
-                        "stats": {"Percent_Tree_Cover_mean": 54.2, "min": 12.0, "max": 88.0, "stdDev": 14.5},
+                        "stats": {
+                            "scene_id": item_id,
+                            "datetime": props.get("datetime"),
+                            "resolution": "250m",
+                            "composite_interval": "16-day global"
+                        },
                         "layer_name": f"MODIS 250m Canopy ({item_id[:16]})"
                     }
             return {
                 "status": "success",
-                "provider": "NASA GIBS / MPC (MODIS Terra 250m Vegetation)",
+                "provider": "NASA GIBS (MODIS Terra 250m Bands 7-2-1)",
                 "tile_url": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_Bands721/default/2024-05-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg",
-                "stats": {"Percent_Tree_Cover_mean": 48.6, "min": 8.0, "max": 94.0, "stdDev": 16.2},
+                "stats": {
+                    "provider": "NASA GIBS Global WMTS",
+                    "resolution": "250m",
+                    "layer": "MODIS Terra Corrected Reflectance (Bands 7-2-1)"
+                },
                 "layer_name": "MODIS Terra 250m Vegetation Canopy"
             }
 
@@ -165,7 +176,9 @@ class ProductionSTACEngine:
             if not is_large_region:
                 features = self._rest_search_mpc("modis-13Q1-061", bbox)
                 if features:
-                    item_id = features[0].get("id")
+                    feat = features[0]
+                    item_id = feat.get("id")
+                    props = feat.get("properties", {})
                     tile_url = (
                         f"https://planetarycomputer.microsoft.com/api/data/v1/item/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}@1x"
                         f"?collection=modis-13Q1-061&item={item_id}&assets=250m_16_days_EVI&rescale=1000,8000&colormap_name=greens"
@@ -174,14 +187,21 @@ class ProductionSTACEngine:
                         "status": "success",
                         "provider": f"Planetary Computer (MODIS 250m EVI — {item_id[:24]}...)",
                         "tile_url": tile_url,
-                        "stats": {"EVI_mean": 0.44, "min": 0.08, "max": 0.82, "stdDev": 0.12},
+                        "stats": {
+                            "scene_id": item_id,
+                            "datetime": props.get("datetime"),
+                            "resolution": "250m"
+                        },
                         "layer_name": "MODIS 250m EVI"
                     }
             return {
                 "status": "success",
                 "provider": "NASA GIBS (MODIS Terra 250m False Color)",
                 "tile_url": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_Bands721/default/2024-05-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg",
-                "stats": {"EVI_mean": 0.42, "min": 0.06, "max": 0.86, "stdDev": 0.14},
+                "stats": {
+                    "provider": "NASA GIBS Global WMTS",
+                    "resolution": "250m"
+                },
                 "layer_name": "MODIS 250m Enhanced Vegetation"
             }
 
@@ -189,7 +209,9 @@ class ProductionSTACEngine:
         if itype in ["sentinel2", "s2_visual", "optical"]:
             features = self._rest_search_mpc("sentinel-2-l2a", bbox)
             if features:
-                item_id = features[0].get("id")
+                feat = features[0]
+                item_id = feat.get("id")
+                props = feat.get("properties", {})
                 tile_url = (
                     f"https://planetarycomputer.microsoft.com/api/data/v1/item/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}@1x"
                     f"?collection=sentinel-2-l2a&item={item_id}&assets=visual"
@@ -198,7 +220,12 @@ class ProductionSTACEngine:
                     "status": "success",
                     "provider": f"Planetary Computer Sentinel-2 10m ({item_id[:28]}...)",
                     "tile_url": tile_url,
-                    "stats": {"resolution": "10m", "scene_id": item_id, "cloud_cover": features[0].get("properties", {}).get("eo:cloud_cover", 0.0)},
+                    "stats": {
+                        "resolution": "10m",
+                        "scene_id": item_id,
+                        "datetime": props.get("datetime"),
+                        "cloud_cover": props.get("eo:cloud_cover")
+                    },
                     "layer_name": f"Sentinel-2 10m Visual ({item_id[:16]})"
                 }
 
@@ -208,7 +235,10 @@ class ProductionSTACEngine:
                 "status": "success",
                 "provider": "NASA GIBS (MODIS Terra 250m True Color)",
                 "tile_url": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/2024-05-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg",
-                "stats": {"resolution": "250m", "composite": "NASA GIBS Global Daily True Color"},
+                "stats": {
+                    "resolution": "250m",
+                    "composite": "NASA GIBS Global Daily True Color"
+                },
                 "layer_name": "MODIS Terra 250m True Color"
             }
 
@@ -218,14 +248,19 @@ class ProductionSTACEngine:
                 "status": "success",
                 "provider": "NASA GIBS (MODIS Terra Land Surface Temp 1km)",
                 "tile_url": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Day/default/2024-05-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png",
-                "stats": {"mean_lst_celsius": 32.4, "max": 44.8, "min": 21.2, "stdDev": 4.1},
+                "stats": {
+                    "resolution": "1km",
+                    "layer": "MODIS Terra Daily LST Day"
+                },
                 "layer_name": "MODIS Land Surface Temp (1km)"
             }
 
         # 6. NDWI / LSWI / NBR / NDBI
         features = self._rest_search_mpc("sentinel-2-l2a", bbox)
         if features:
-            item_id = features[0].get("id")
+            feat = features[0]
+            item_id = feat.get("id")
+            props = feat.get("properties", {})
             tile_url = (
                 f"https://planetarycomputer.microsoft.com/api/data/v1/item/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}@1x"
                 f"?collection=sentinel-2-l2a&item={item_id}&assets=visual"
@@ -234,7 +269,12 @@ class ProductionSTACEngine:
                 "status": "success",
                 "provider": f"Planetary Computer ({itype.upper()} — {item_id[:24]}...)",
                 "tile_url": tile_url,
-                "stats": {f"{itype.upper()}_mean": 0.48, "min": -0.1, "max": 0.85, "stdDev": 0.16},
+                "stats": {
+                    "scene_id": item_id,
+                    "datetime": props.get("datetime"),
+                    "cloud_cover": props.get("eo:cloud_cover"),
+                    "resolution": "10m"
+                },
                 "layer_name": f"Sentinel-2 {itype.upper()} Layer ({item_id[:16]})"
             }
 
@@ -242,7 +282,10 @@ class ProductionSTACEngine:
             "status": "success",
             "provider": "NASA GIBS / MPC (MODIS Terra 250m Stream)",
             "tile_url": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_Bands721/default/2024-05-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg",
-            "stats": {f"{itype.upper()}_mean": 0.45, "min": 0.05, "max": 0.90},
+            "stats": {
+                "provider": "NASA GIBS Global WMTS",
+                "resolution": "250m"
+            },
             "layer_name": f"MODIS 250m {itype.upper()} Stream"
         }
 
@@ -296,13 +339,7 @@ class ProductionSTACEngine:
     ) -> Dict[str, Any]:
         """
         Full pipeline: STAC search → find best scene → read COG bands → return numpy arrays.
-
-        Returns dict with keys:
-            status: 'success' | 'fallback'
-            nir_array, red_array, green_array, swir_array: np.ndarray or None
-            provider: str describing data source
         """
-        # Attempt real STAC COG pipeline
         try:
             scenes = self.query_sentinel2_stac(
                 bbox, max_items=1, collection=collection
@@ -314,6 +351,7 @@ class ProductionSTACEngine:
                 red_url = assets.get("B04", {}).get("href")
                 green_url = assets.get("B03", {}).get("href")
                 swir_url = assets.get("B11", {}).get("href")
+                swir2_url = assets.get("B12", {}).get("href")
 
                 nir_arr = self.read_cog_window(nir_url, bbox) if nir_url else None
                 red_arr = self.read_cog_window(red_url, bbox) if red_url else None
@@ -323,9 +361,11 @@ class ProductionSTACEngine:
                 swir_arr = (
                     self.read_cog_window(swir_url, bbox) if swir_url else None
                 )
+                swir2_arr = (
+                    self.read_cog_window(swir2_url, bbox) if swir2_url else None
+                )
 
                 if nir_arr is not None and red_arr is not None:
-                    # Normalize to [0, 1] reflectance if needed (Sentinel-2 L2A: divide by 10000)
                     nir_f = nir_arr.astype(np.float32) / 10000.0
                     red_f = red_arr.astype(np.float32) / 10000.0
                     green_f = (
@@ -338,6 +378,11 @@ class ProductionSTACEngine:
                         if swir_arr is not None
                         else None
                     )
+                    swir2_f = (
+                        swir2_arr.astype(np.float32) / 10000.0
+                        if swir2_arr is not None
+                        else None
+                    )
 
                     return {
                         "status": "success",
@@ -346,21 +391,21 @@ class ProductionSTACEngine:
                         "red_array": red_f,
                         "green_array": green_f,
                         "swir_array": swir_f,
+                        "swir2_array": swir2_f,
                     }
         except Exception as e:
-            print(f"[ProductionSTACEngine] Real raster pipeline note: {e}")
+            print(f"[ProductionSTACEngine] COG pipeline note: {e}")
 
-        # Graceful synthetic fallback — deterministic per bbox location
-        seed = hash(tuple(bbox)) % (2**32)
-        rng = np.random.RandomState(seed)
-
+        # Honest no-data return when COGs cannot be retrieved
         return {
-            "status": "fallback",
-            "provider": "Synthetic Raster Engine (STAC offline)",
-            "nir_array": rng.uniform(0.30, 0.80, (100, 100)).astype(np.float32),
-            "red_array": rng.uniform(0.04, 0.22, (100, 100)).astype(np.float32),
-            "green_array": rng.uniform(0.03, 0.18, (100, 100)).astype(np.float32),
-            "swir_array": rng.uniform(0.08, 0.45, (100, 100)).astype(np.float32),
+            "status": "no_data",
+            "provider": "Planetary Computer STAC",
+            "message": f"No COG satellite imagery could be downloaded for bbox {bbox}.",
+            "nir_array": None,
+            "red_array": None,
+            "green_array": None,
+            "swir_array": None,
+            "swir2_array": None,
         }
 
     def _rest_anonymous_fallback(

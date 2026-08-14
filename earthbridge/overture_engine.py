@@ -34,14 +34,11 @@ class ProductionOvertureEngine:
     def __init__(self):
         self.conn = None
         if DUCKDB_AVAILABLE:
-            self.conn = duckdb.connect()
             try:
+                self.conn = duckdb.connect()
                 self.conn.execute("INSTALL spatial; LOAD spatial;")
                 self.conn.execute("INSTALL httpfs; LOAD httpfs;")
                 self.conn.execute("SET s3_region='us-west-2';")
-                # Anonymous access — Overture S3 is public
-                self.conn.execute("SET s3_access_key_id='';")
-                self.conn.execute("SET s3_secret_access_key='';")
             except Exception as e:
                 print(f"[OvertureEngine] DuckDB spatial setup note: {e}")
 
@@ -53,24 +50,29 @@ class ProductionOvertureEngine:
     ) -> gpd.GeoDataFrame:
         """
         Fetches REAL building footprints within bounding box.
-        Chain: Overture Maps S3 → OSM Overpass API → Synthetic fallback.
+        Chain: Overture Maps S3 → OSM Overpass API → Empty GeoDataFrame.
 
         Args:
             bbox: [min_lon, min_lat, max_lon, max_lat]
             limit: Maximum buildings to return
             polygon_mask: Optional Shapely polygon to clip results
         """
-        min_x, min_y, max_x, max_y = bbox
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            raise ValueError(f"Invalid bbox format: {bbox}. Expected [min_lon, min_lat, max_lon, max_lat]")
+        try:
+            min_x, min_y, max_x, max_y = [float(v) for v in bbox]
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid bbox coordinates: {bbox}. All 4 elements must be numeric.")
 
-        # 1. Try DuckDB Overture Maps S3 Query
+        # 1. Try DuckDB Overture Maps S3 Query (spatial intersection)
         if self.conn is not None:
             sql = f"""
             SELECT id, names.primary as name, subtype, height, num_floors,
                    ST_GeomFromWKB(geometry) as geom
             FROM read_parquet('{self.OVERTURE_S3_RELEASE}')
-            WHERE bbox.xmin >= {min_x} AND bbox.xmax <= {max_x}
-              AND bbox.ymin >= {min_y} AND bbox.ymax <= {max_y}
-            LIMIT {limit}
+            WHERE bbox.xmin <= {max_x} AND bbox.xmax >= {min_x}
+              AND bbox.ymin <= {max_y} AND bbox.ymax >= {min_y}
+            LIMIT {int(limit)}
             """
             try:
                 df = self.conn.execute(sql).fetchdf()
@@ -86,19 +88,20 @@ class ProductionOvertureEngine:
             except Exception as e:
                 print(
                     f"[OvertureEngine] S3 Overture stream note ({e}), "
-                    "switching to OpenStreetMap..."
+                    "switching to OpenStreetMap Overpass..."
                 )
 
         # 2. Try OpenStreetMap Overpass REST API
-        osm_gdf = self._fetch_osm_buildings_live(bbox, limit=limit)
+        osm_gdf = self._fetch_osm_buildings_live([min_x, min_y, max_x, max_y], limit=limit)
         if osm_gdf is not None and len(osm_gdf) > 0:
             if polygon_mask is not None:
                 osm_gdf = osm_gdf[osm_gdf.geometry.intersects(polygon_mask)]
             return osm_gdf
 
-        # 3. Fallback: Generate realistic building polygons
-        return self._generate_realistic_building_polygons(
-            bbox, count=min(limit, 80), polygon_mask=polygon_mask
+        # 3. Honest empty GeoDataFrame when no real building vector data exists
+        return gpd.GeoDataFrame(
+            columns=["id", "name", "subtype", "height", "num_floors", "geometry"],
+            crs="EPSG:4326"
         )
 
     def _fetch_osm_buildings_live(

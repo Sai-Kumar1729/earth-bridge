@@ -96,7 +96,63 @@ def partition(bbox: List[float], tile_size: float = 0.1) -> List[Dict[str, Any]]
 
 def compute_index(bbox: List[float], index: str = "ndvi") -> Dict[str, Any]:
     """Compute spectral indices (NDVI, NDWI, LSWI, NBR, NDBI) on satellite rasters."""
-    return get_stac_engine().fetch_raster_for_bbox(bbox=bbox, index_type=index)
+    import numpy as np
+    raster = get_stac_engine().fetch_raster_for_bbox(bbox=bbox, index_type=index)
+    
+    if raster.get("status") != "success":
+        return {
+            **raster,
+            "index": index.upper(),
+            "index_array": None,
+            "index_mean": None,
+            "index_min": None,
+            "index_max": None,
+            "index_std": None
+        }
+
+    band_map = {
+        "ndvi": ("nir_array", "red_array"),
+        "ndwi": ("green_array", "nir_array"),
+        "lswi": ("nir_array", "swir_array"),
+        "nbr": ("nir_array", "swir2_array"),
+        "ndbi": ("swir_array", "nir_array"),
+    }
+    
+    itype = index.lower()
+    a_key, b_key = band_map.get(itype, ("nir_array", "red_array"))
+    a, b = raster.get(a_key), raster.get(b_key)
+    
+    if a is None or b is None:
+        return {
+            **raster,
+            "index_array": None,
+            "index": index.upper(),
+            "error": f"Required bands ({a_key}, {b_key}) for {index.upper()} unavailable from this scene."
+        }
+
+    fn_map = {
+        "ndvi": SpectralIndexCalculator.ndvi,
+        "ndwi": SpectralIndexCalculator.ndwi,
+        "lswi": SpectralIndexCalculator.lswi,
+        "nbr": SpectralIndexCalculator.nbr,
+        "ndbi": SpectralIndexCalculator.ndbi,
+    }
+    calc_fn = fn_map.get(itype, SpectralIndexCalculator.ndvi)
+    index_array = calc_fn(a, b)
+    
+    valid = index_array[~np.isnan(index_array)] if index_array is not None else np.array([])
+    
+    return {
+        "status": "success",
+        "provider": raster.get("provider"),
+        "index": index.upper(),
+        "index_array": index_array,
+        "index_mean": float(np.nanmean(valid)) if len(valid) > 0 else None,
+        "index_min": float(np.nanmin(valid)) if len(valid) > 0 else None,
+        "index_max": float(np.nanmax(valid)) if len(valid) > 0 else None,
+        "index_std": float(np.nanstd(valid)) if len(valid) > 0 else None,
+        "pixels_processed": len(valid)
+    }
 
 def export(data, format: str = "geojson", output: str = "output.geojson"):
     """Export spatial dataset to GeoJSON, Parquet, or CSV."""

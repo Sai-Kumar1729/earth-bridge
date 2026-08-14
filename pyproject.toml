@@ -7,7 +7,7 @@ name = "earth-bridge"
 version = "0.2.0"
 description = "Open Earth Data & Cross-Cloud STAC Engine bridging Google Earth Engine, Microsoft Planetary Computer, and Overture Maps Foundation."
 readme = "README.md"
-authors = [{ name = "Open GeoAI Developer", email = "developer@opengeo.ai" }]
+authors = [{ name = "Sai Kumar", email = "saikumarkummari1729@gmail.com" }]
 license = "MIT"
 keywords = ["gis", "earth-observation", "google-earth-engine", "planetary-computer", "overture-maps", "stac", "remote-sensing", "rasterio", "geopandas"]
 dependencies = [
