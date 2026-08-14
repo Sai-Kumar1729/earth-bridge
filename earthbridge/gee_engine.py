@@ -291,66 +291,144 @@ class GEEOperationEngine:
             "tile_url": tile_url,
         }
 
+    def compute_spectral_index(
+        self,
+        bbox: List[float],
+        index_type: str = "ndvi",
+        start_date: str = "2024-01-01",
+        end_date: str = "2024-06-01",
+        cloud_threshold: float = 20.0,
+        geometry_geojson: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Computes requested satellite index 100% on Google Earth Engine Cloud Compute.
+        Zero local RAM used — Google handles the server-side cloud masking, median composite,
+        spectral math, region reduction, and streaming MapID tile rendering.
+        """
+        if not self.initialized:
+            return self._unauthenticated_fallback(f"Index '{index_type.upper()}'")
+
+        try:
+            min_x, min_y, max_x, max_y = bbox
+            if geometry_geojson:
+                try:
+                    region = ee.Geometry(geometry_geojson)
+                except Exception:
+                    region = ee.Geometry.Rectangle([min_x, min_y, max_x, max_y])
+            else:
+                region = ee.Geometry.Rectangle([min_x, min_y, max_x, max_y])
+
+            # Route MODIS TCC
+            if index_type in ["modis_tcc", "tcc"]:
+                return self.compute_modis_tcc(bbox=bbox)
+
+            # Route MODIS True Color
+            if index_type in ["modis_true_color", "modis_rgb"]:
+                return self.compute_modis_true_color(bbox=bbox, start_date=start_date, end_date=end_date)
+
+            # Route LST Anomaly
+            if index_type in ["lst_anomaly", "lst"]:
+                return self.compute_lst_climatology_anomaly(bbox=bbox)
+
+            # Sentinel-2 Harmonized Surface Reflectance (10m - 20m)
+            s2 = (
+                ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+                .filterBounds(region)
+                .filterDate(start_date, end_date)
+                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_threshold))
+            )
+
+            img = s2.median().clip(region)
+
+            # Index Configurations & Color Palettes
+            index_configs = {
+                "ndvi": {
+                    "expr": img.normalizedDifference(["B8", "B4"]),
+                    "name": "NDVI (Vegetation Index)",
+                    "viz": {"min": -0.1, "max": 0.85, "palette": ["#a50026", "#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffbf", "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850", "#006837"]}
+                },
+                "ndwi": {
+                    "expr": img.normalizedDifference(["B3", "B8"]),
+                    "name": "NDWI (Water Index)",
+                    "viz": {"min": -0.5, "max": 0.5, "palette": ["#ffffd4", "#fed98e", "#fe9929", "#d95f0e", "#993404", "#045a8d", "#023858"]}
+                },
+                "lswi": {
+                    "expr": img.normalizedDifference(["B8", "B11"]),
+                    "name": "LSWI (Land Surface Water)",
+                    "viz": {"min": -0.2, "max": 0.6, "palette": ["#8c510a", "#d8b365", "#f6e8c3", "#c7eae5", "#5ab4ac", "#01665e"]}
+                },
+                "nbr": {
+                    "expr": img.normalizedDifference(["B8", "B12"]),
+                    "name": "NBR (Burn Ratio)",
+                    "viz": {"min": -0.3, "max": 0.7, "palette": ["#7f3b08", "#b35806", "#e08214", "#fdb863", "#fee0b6", "#d8daeb", "#b2abd2", "#8073ac", "#542788", "#2d004b"]}
+                },
+                "ndbi": {
+                    "expr": img.normalizedDifference(["B11", "B8"]),
+                    "name": "NDBI (Built-Up Index)",
+                    "viz": {"min": -0.3, "max": 0.5, "palette": ["#2b83ba", "#abdda4", "#ffffbf", "#fdae61", "#d7191c"]}
+                }
+            }
+
+            cfg = index_configs.get(index_type.lower(), index_configs["ndvi"])
+            index_img = cfg["expr"].rename("index_value")
+
+            # MapID Tile Generation on Google Earth Engine Cloud
+            map_id = index_img.getMapId(cfg["viz"])
+            tile_url = map_id["tile_fetcher"].url_format
+
+            # Server-Side Region Reduction Statistics
+            stats = (
+                index_img.reduceRegion(
+                    reducer=ee.Reducer.mean().combine(
+                        ee.Reducer.minMax(), sharedInputs=True
+                    ).combine(
+                        ee.Reducer.stdDev(), sharedInputs=True
+                    ),
+                    geometry=region,
+                    scale=20,
+                    maxPixels=1e9,
+                )
+                .getInfo()
+            )
+
+            mean_v = float(stats.get("index_value_mean") or 0.0)
+            min_v = float(stats.get("index_value_min") or 0.0)
+            max_v = float(stats.get("index_value_max") or 1.0)
+            std_v = float(stats.get("index_value_stdDev") or 0.0)
+
+            return {
+                "status": "success",
+                "provider": f"Google Earth Engine Cloud ({cfg['name']})",
+                "tile_url": tile_url,
+                "stats": {
+                    f"{index_type.upper()}_mean": round(mean_v, 4),
+                    "mean": round(mean_v, 4),
+                    "min": round(min_v, 4),
+                    "max": round(max_v, 4),
+                    "stdDev": round(std_v, 4)
+                },
+                "layer_name": f"GEE Sentinel-2 {index_type.upper()} (Cloud Compute)"
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "provider": "Google Earth Engine",
+                "message": f"GEE Cloud Compute error for {index_type}: {str(e)}"
+            }
+
     def compute_sentinel2_indices(
         self,
         bbox: List[float],
-        start_date: str,
-        end_date: str,
+        start_date: str = "2024-01-01",
+        end_date: str = "2024-06-01",
         cloud_threshold: float = 15.0,
     ) -> Dict[str, Any]:
-        """
-        Computes cloud-masked Sentinel-2 L2A median surface reflectance and spectral indices.
-        Calculates: NDVI, NDWI, LSWI, NBR, NDBI.
-        """
-        if not self.initialized:
-            return self._unauthenticated_fallback("Sentinel-2 Spectral Indices")
-
-        min_x, min_y, max_x, max_y = bbox
-        region = ee.Geometry.Rectangle([min_x, min_y, max_x, max_y])
-
-        s2 = (
-            ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-            .filterBounds(region)
-            .filterDate(start_date, end_date)
-            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_threshold))
+        """Convenience wrapper for Sentinel-2 NDVI computation."""
+        return self.compute_spectral_index(
+            bbox=bbox,
+            index_type="ndvi",
+            start_date=start_date,
+            end_date=end_date,
+            cloud_threshold=cloud_threshold
         )
 
-        median_img = s2.median().clip(region)
-
-        # Calculate spectral indices
-        ndvi = median_img.normalizedDifference(["B8", "B4"]).rename("NDVI")
-        ndwi = median_img.normalizedDifference(["B3", "B8"]).rename("NDWI")
-        lswi = median_img.normalizedDifference(["B8", "B11"]).rename("LSWI")
-        nbr = median_img.normalizedDifference(["B8", "B12"]).rename("NBR")
-        ndbi = median_img.normalizedDifference(["B11", "B8"]).rename("NDBI")
-
-        # Generate MapID Tile URLs — correct Earth Engine API pattern
-        ndvi_viz = {
-            "min": -0.1,
-            "max": 0.8,
-            "palette": ["#0000ff", "#ffffff", "#22c55e", "#15803d"],
-        }
-        try:
-            map_id = ndvi.getMapId(ndvi_viz)
-            tile_url = map_id["tile_fetcher"].url_format
-        except Exception:
-            tile_url = None
-
-        stats = (
-            ndvi.reduceRegion(
-                reducer=ee.Reducer.mean().combine(
-                    ee.Reducer.minMax(), sharedInputs=True
-                ),
-                geometry=region,
-                scale=10,
-                maxPixels=1e9,
-            )
-            .getInfo()
-        )
-
-        return {
-            "status": "success",
-            "provider": "Google Earth Engine (Sentinel-2 L2A)",
-            "tile_url": tile_url,
-            "stats": stats,
-        }

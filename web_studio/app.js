@@ -25,15 +25,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function checkGeeStatus() {
   const statusBadge = document.getElementById('geeStatusText');
+  const btnGeeConfig = document.getElementById('btnGeeConfig');
+  const savedProject = localStorage.getItem('gee_project_id');
+
   try {
-    const resp = await fetch('/api/gee_status');
-    const data = await resp.json();
+    // If not initialized on server yet, try auto-connecting with saved localStorage project
+    let resp = await fetch('/api/gee_status');
+    let data = await resp.json();
+
+    if (!data.initialized && savedProject) {
+      try {
+        const autoResp = await fetch('/api/init_gee', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: savedProject })
+        });
+        const autoData = await autoResp.json();
+        if (autoData.status === 'success') {
+          data.initialized = true;
+          data.project_id = savedProject;
+        }
+      } catch (err) {}
+    }
+
     if (data.initialized) {
       statusBadge.textContent = data.project_id ? `Connected (${data.project_id})` : 'Connected';
       statusBadge.style.color = '#56d364';
+      if (btnGeeConfig) {
+        btnGeeConfig.style.borderColor = 'rgba(46, 160, 67, 0.4)';
+        btnGeeConfig.style.backgroundColor = 'rgba(46, 160, 67, 0.12)';
+      }
     } else {
-      statusBadge.textContent = 'Setup Project ID';
+      statusBadge.textContent = 'Connect GEE (One-Time)';
       statusBadge.style.color = '#e3b341';
+      if (btnGeeConfig) {
+        btnGeeConfig.style.borderColor = 'rgba(210, 153, 34, 0.4)';
+        btnGeeConfig.style.backgroundColor = 'rgba(210, 153, 34, 0.12)';
+      }
     }
   } catch (e) {
     statusBadge.textContent = 'Offline';
@@ -285,6 +313,7 @@ function setupEventListeners() {
         });
         const data = await resp.json();
         if (data.status === 'success') {
+          localStorage.setItem('gee_project_id', projectId);
           geeInitFeedback.innerHTML = `<span style="color: #56d364;">${data.message}</span>`;
           checkGeeStatus();
           setTimeout(() => geeModal.classList.add('hidden'), 1200);
@@ -786,17 +815,12 @@ async function runMasterCompute() {
 
     const data = await response.json();
     
-    if (data.status === 'unauthenticated') {
-      showError(data.message || 'Google Earth Engine authentication required.');
-      const geeModal = document.getElementById('geeModal');
-      if (geeModal) geeModal.classList.remove('hidden');
-      statusBadge.className = 'status-pill status-error';
-      statusBadge.textContent = 'Auth Required';
-      return;
-    }
-    
     if (data.status === 'error') {
       throw new Error(data.message || 'Compute failed');
+    }
+
+    if (data.message && data.compute_mode !== 'Google Earth Engine Cloud') {
+      console.log(`[earth-bridge] ${data.message}`);
     }
 
     updateDashboard(data, indexLabel);

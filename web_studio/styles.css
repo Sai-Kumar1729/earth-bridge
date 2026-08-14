@@ -100,7 +100,18 @@ body {
   background-color: var(--secondary);
 }
 
-.badge-gee { border-color: rgba(52, 168, 83, 0.4); color: #81c995; }
+.badge-gee { 
+  border-color: rgba(52, 168, 83, 0.4); 
+  color: #81c995; 
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+.badge-gee:hover {
+  background-color: rgba(52, 168, 83, 0.2);
+  border-color: #34a853;
+  transform: translateY(-1px);
+}
 .badge-mpc { border-color: rgba(0, 164, 239, 0.4); color: #70c7ff; }
 .badge-overture { border-color: rgba(255, 107, 74, 0.4); color: #ff9b85; }
 
