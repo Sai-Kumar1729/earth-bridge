@@ -16,6 +16,38 @@ from .tiling import partition_state_bbox
 from .stac_reader import search_stac_anonymously
 from .exporter import export_open_dataset
 
+def find_web_studio_server() -> str:
+    """Finds web_studio/server.py across editable, virtualenv, and site-package installs on any OS."""
+    candidates = [
+        # 1. Editable / development source repo
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_studio", "server.py"),
+        # 2. Package subdirectory
+        os.path.join(os.path.dirname(__file__), "web_studio", "server.py"),
+        # 3. Installed alongside package in site-packages
+        os.path.join(sys.prefix, "web_studio", "server.py"),
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return os.path.abspath(p)
+    return candidates[0]
+
+def launch_studio(port: int = 8000, open_browser: bool = True):
+    """Launches the interactive Web Studio server and opens the browser on any OS."""
+    import webbrowser
+    import threading
+    import time
+
+    server_path = find_web_studio_server()
+    print(f"[earth-bridge] Launching Spatial Studio on http://localhost:{port}...")
+    
+    if open_browser:
+        def _open():
+            time.sleep(1.2)
+            webbrowser.open_new_tab(f"http://localhost:{port}")
+        threading.Thread(target=_open, daemon=True).start()
+
+    subprocess.run([sys.executable, server_path])
+
 def main():
     parser = argparse.ArgumentParser(
         description="earth-bridge: Open Earth Data & Cross-Cloud STAC Engine"
@@ -44,9 +76,10 @@ def main():
     stac_parser.add_argument("--bbox", type=str, default="78.4,17.3,78.5,17.4")
     stac_parser.add_argument("--collection", type=str, default="sentinel-2-l2a")
 
-    # Command: studio
+    # Command: studio / launch
     studio_parser = subparsers.add_parser("studio", help="Launch interactive EarthBridge Web Workbench server")
     studio_parser.add_argument("--port", type=int, default=8000)
+    studio_parser.add_argument("--no-browser", action="store_true", help="Do not open browser automatically")
 
     args = parser.parse_args()
 
@@ -92,11 +125,8 @@ def main():
         for item in res["items"][:3]:
             print(f" -> Item ID: {item['id']} | Date: {item['datetime']} | Cloud Cover: {item['cloud_cover']}%")
 
-    elif args.command == "studio":
-        # Launch server using subprocess to correctly load it outside the package namespace
-        server_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'web_studio', 'server.py')
-        print(f"[earth-bridge] Starting studio on port {args.port}...")
-        subprocess.run([sys.executable, server_path])
+    elif args.command in ["studio", "launch"]:
+        launch_studio(port=args.port, open_browser=not getattr(args, "no_browser", False))
 
     else:
         parser.print_help()
