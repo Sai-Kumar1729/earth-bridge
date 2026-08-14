@@ -15,8 +15,17 @@ Requires-Dist: pandas>=1.5
 Requires-Dist: geopandas>=0.12
 Requires-Dist: shapely>=2.0
 Requires-Dist: duckdb>=0.9
-Requires-Dist: pystac>=1.8
-Requires-Dist: earthengine-api>=0.1.370
+Provides-Extra: gee
+Requires-Dist: earthengine-api>=0.1.370; extra == "gee"
+Provides-Extra: stac
+Requires-Dist: pystac-client>=0.6; extra == "stac"
+Requires-Dist: planetary-computer>=1.0; extra == "stac"
+Requires-Dist: rasterio>=1.3; extra == "stac"
+Provides-Extra: all
+Requires-Dist: earthengine-api>=0.1.370; extra == "all"
+Requires-Dist: pystac-client>=0.6; extra == "all"
+Requires-Dist: planetary-computer>=1.0; extra == "all"
+Requires-Dist: rasterio>=1.3; extra == "all"
 Dynamic: license-file
 
 # 🌍 earth-bridge: Open Earth Data & Cross-Cloud STAC Engine

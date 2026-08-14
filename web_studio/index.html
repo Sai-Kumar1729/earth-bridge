@@ -8,6 +8,8 @@
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Leaflet Geoman Drawing CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
   <!-- Google Fonts & Lucide Icons -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,109 +39,225 @@
         </div>
       </div>
       <div class="header-badges">
-        <span class="badge badge-gee"><i data-lucide="cpu"></i> GEE Climatology</span>
+        <button id="btnGeeConfig" class="badge badge-gee" title="Click to configure GEE Cloud Project ID">
+          <i data-lucide="cpu"></i> GEE: <span id="geeStatusText">Checking...</span>
+        </button>
         <span class="badge badge-mpc"><i data-lucide="cloud"></i> STAC 1.0 COG</span>
         <span class="badge badge-overture"><i data-lucide="layers"></i> Building Polygons</span>
       </div>
     </header>
 
+    <!-- GEE Authentication Modal -->
+    <div id="geeModal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3><i data-lucide="cpu"></i> Earth Engine Cloud Connection</h3>
+          <button id="btnCloseGeeModal" class="btn-icon"><i data-lucide="x"></i></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size: 0.85rem; color: var(--text-main);">
+            To execute server-side spatial compute on Google Earth Engine (MODIS TCC, LST Climatology), initialize with your Google Cloud Project ID:
+          </p>
+          <div class="form-group" style="margin-top: 12px;">
+            <label for="geeProjectIdInput">Google Cloud Project ID</label>
+            <input type="text" id="geeProjectIdInput" class="form-control" placeholder="e.g. ee-myproject or my-gcp-project-123">
+          </div>
+          <div style="background-color: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; margin-top: 10px;">
+            <small style="color: var(--text-muted); display: block; line-height: 1.4;">
+              <strong>Note:</strong> If authenticating for the first time, run <code style="color: var(--primary-hover);">earthengine authenticate</code> in your terminal to create your local credentials token.
+            </small>
+          </div>
+          <div id="geeInitFeedback" style="margin-top: 10px; font-size: 0.8rem;"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="btnConnectGee" class="btn btn-primary"><i data-lucide="link"></i> Connect & Initialize GEE</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Main Workspace -->
     <main class="workspace">
       <!-- Sidebar Control Panel -->
-      <aside class="sidebar">
-
-        <!-- Shapefile Upload -->
-        <div class="panel-section">
-          <h3><i data-lucide="upload-cloud"></i> Boundary Upload</h3>
-          <div id="dropZone" class="drop-zone">
-            <i data-lucide="file-plus"></i>
-            <p>Drag & drop <strong>.zip</strong> or <strong>.geojson</strong></p>
-            <input type="file" id="shapefileInput" accept=".zip,.geojson,.json" hidden>
-            <button id="btnBrowseFile" class="btn btn-secondary btn-sm">Browse Files</button>
-          </div>
-          <p id="uploadFileName" class="upload-filename"></p>
+      <aside class="sidebar" id="sidebar">
+        <!-- Sidebar Header with Collapse Toggle -->
+        <div class="sidebar-top">
+          <h2><i data-lucide="sliders-horizontal"></i> Control Panel</h2>
+          <button id="btnToggleSidebar" class="btn-icon" title="Toggle sidebar">
+            <i data-lucide="chevrons-left" id="sidebarToggleIcon"></i>
+          </button>
         </div>
 
-        <!-- Manual Coordinate Entry -->
+        <!-- 1. Region of Interest (ROI) - Tabbed: Upload vs Draw vs Manual -->
         <div class="panel-section">
-          <h3><i data-lucide="map-pin"></i> Bounding Box Coordinates</h3>
-          <div class="coord-grid">
-            <div class="form-group">
-              <label for="coordMinLon">Min Lon (W)</label>
-              <input type="number" id="coordMinLon" class="form-control" step="0.001" value="78.350">
+          <div class="section-header" data-target="sectionRoi">
+            <h3><i data-lucide="map-pin"></i> Region of Interest</h3>
+            <button class="btn-icon-xs toggle-section-btn"><i data-lucide="chevron-down"></i></button>
+          </div>
+          <div id="sectionRoi" class="section-body">
+            <div class="tab-pills">
+              <button class="tab-pill active" id="tabRoiUpload"><i data-lucide="upload-cloud"></i> Upload</button>
+              <button class="tab-pill" id="tabRoiDraw"><i data-lucide="edit-3"></i> Draw</button>
+              <button class="tab-pill" id="tabRoiManual"><i data-lucide="crosshair"></i> Coordinates</button>
             </div>
-            <div class="form-group">
-              <label for="coordMinLat">Min Lat (S)</label>
-              <input type="number" id="coordMinLat" class="form-control" step="0.001" value="17.300">
+
+            <!-- Upload View -->
+            <div id="roiUploadView" class="roi-view">
+              <div id="dropZone" class="drop-zone">
+                <i data-lucide="file-plus"></i>
+                <p>Drag & drop <strong>.zip</strong>, <strong>.geojson</strong>, <strong>.shp</strong></p>
+                <input type="file" id="shapefileInput" accept=".zip,.geojson,.json,.shp,.shx,.dbf,.prj" multiple hidden>
+                <button id="btnBrowseFile" class="btn btn-secondary btn-xs">Browse Files</button>
+              </div>
+              <p id="uploadFileName" class="upload-filename"></p>
             </div>
-            <div class="form-group">
-              <label for="coordMaxLon">Max Lon (E)</label>
-              <input type="number" id="coordMaxLon" class="form-control" step="0.001" value="78.550">
+
+            <!-- Manual Draw View -->
+            <div id="roiDrawView" class="roi-view hidden">
+              <p style="font-size: 0.76rem; color: var(--text-muted); margin-bottom: 8px; line-height: 1.3;">
+                Draw an area directly on the map canvas for immediate satellite compute:
+              </p>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                <button id="btnDrawRect" class="btn btn-secondary btn-xs"><i data-lucide="square"></i> Rectangle / Box</button>
+                <button id="btnDrawPolygon" class="btn btn-secondary btn-xs"><i data-lucide="hexagon"></i> Polygon</button>
+              </div>
+              <div style="margin-top: 6px;">
+                <button id="btnClearDraw" class="btn btn-secondary btn-xs btn-full"><i data-lucide="trash-2"></i> Clear Drawn Shape</button>
+              </div>
+              <div id="drawnRoiSummary" style="margin-top: 8px; padding: 8px; background-color: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 4px; display: none;">
+                <span style="font-size: 0.72rem; color: var(--text-bright); font-family: var(--font-mono); display: block;" id="drawnRoiCoords"></span>
+              </div>
             </div>
-            <div class="form-group">
-              <label for="coordMaxLat">Max Lat (N)</label>
-              <input type="number" id="coordMaxLat" class="form-control" step="0.001" value="17.500">
+
+            <!-- Manual BBox View -->
+            <div id="roiManualView" class="roi-view hidden">
+              <div class="coord-grid">
+                <div class="form-group">
+                  <label for="coordMinLon">Min Lon (West)</label>
+                  <input type="number" id="coordMinLon" class="form-control" step="0.001" value="78.350">
+                </div>
+                <div class="form-group">
+                  <label for="coordMaxLon">Max Lon (East)</label>
+                  <input type="number" id="coordMaxLon" class="form-control" step="0.001" value="78.550">
+                </div>
+                <div class="form-group">
+                  <label for="coordMinLat">Min Lat (South)</label>
+                  <input type="number" id="coordMinLat" class="form-control" step="0.001" value="17.300">
+                </div>
+                <div class="form-group">
+                  <label for="coordMaxLat">Max Lat (North)</label>
+                  <input type="number" id="coordMaxLat" class="form-control" step="0.001" value="17.500">
+                </div>
+              </div>
+              <button id="btnSetBbox" class="btn btn-secondary btn-sm btn-full mt-2"><i data-lucide="crosshair"></i> Set Extent & Zoom</button>
             </div>
           </div>
-          <button id="btnSetBbox" class="btn btn-secondary btn-full"><i data-lucide="crosshair"></i> Set Extent & Zoom</button>
         </div>
 
-        <!-- Index Selector -->
+        <!-- 2. Satellite Analytics Compute -->
         <div class="panel-section">
-          <h3><i data-lucide="sliders"></i> Satellite Index</h3>
-          <div class="form-group">
-            <label for="indexSelect">Spectral Index / Climatology</label>
-            <select id="indexSelect" class="form-control">
-              <option value="ndvi" selected>NDVI — Vegetation Health</option>
-              <option value="ndwi">NDWI — Water Saturation</option>
-              <option value="lswi">LSWI — Land Surface Water</option>
-              <option value="nbr">NBR — Burn Ratio</option>
-              <option value="ndbi">NDBI — Built-up Urban</option>
-              <option value="lst_anomaly">LST Anomaly — 10yr Thermal Deviation (GEE)</option>
-            </select>
+          <div class="section-header" data-target="sectionCompute">
+            <h3><i data-lucide="cpu"></i> Satellite Analytics</h3>
+            <button class="btn-icon-xs toggle-section-btn"><i data-lucide="chevron-down"></i></button>
           </div>
-          <button id="btnRunCompute" class="btn btn-primary btn-full"><i data-lucide="play"></i> Run Spatial Compute</button>
-        </div>
-
-        <!-- Layer Toggles -->
-        <div class="panel-section">
-          <h3><i data-lucide="grid-3x3"></i> Map Layers</h3>
-          <div class="toggle-control">
-            <label class="switch">
-              <input type="checkbox" id="overtureToggle" checked>
-              <span class="slider round"></span>
-            </label>
-            <span>Building Footprint Polygons</span>
-          </div>
-          <div class="toggle-control">
-            <label class="switch">
-              <input type="checkbox" id="tilingToggle" checked>
-              <span class="slider round"></span>
-            </label>
-            <span>Sub-Grid Tiling Overlay</span>
+          <div id="sectionCompute" class="section-body">
+            <div class="form-group">
+              <label for="indexSelect">Satellite Product / Climatology</label>
+              <select id="indexSelect" class="form-control">
+                <option value="modis_tcc" selected>🌲 MODIS Tree Canopy Cover (MOD44B TCC — 250m)</option>
+                <option value="modis_true_color">🛰️ MODIS True Color Composite (MOD09A1 — 500m)</option>
+                <option value="lst_anomaly">🌡️ LST Anomaly — 10yr Thermal Deviation (GEE)</option>
+                <option value="ndvi">🌿 Sentinel-2 NDVI — Vegetation Health (High-Res Local)</option>
+                <option value="ndwi">💧 Sentinel-2 NDWI — Water Saturation (High-Res Local)</option>
+                <option value="lswi">🌾 Sentinel-2 LSWI — Land Surface Water (High-Res Local)</option>
+                <option value="nbr">🔥 Sentinel-2 NBR — Burn Ratio (High-Res Local)</option>
+                <option value="ndbi">🏢 Sentinel-2 NDBI — Built-up Urban (High-Res Local)</option>
+              </select>
+            </div>
+            <button id="btnRunCompute" class="btn btn-primary btn-full"><i data-lucide="play"></i> Compute & Render Layer</button>
           </div>
         </div>
 
-        <!-- Index Layer Toggles -->
+        <!-- 3. Unified Layer Manager -->
         <div class="panel-section">
-          <h3><i data-lucide="layers"></i> Computed Index Layers</h3>
-          <div id="indexLayerToggles" class="index-layer-list">
-            <p class="empty-state">Run a compute to enable index layers</p>
+          <div class="section-header" data-target="sectionLayers">
+            <h3><i data-lucide="layers"></i> Layer Manager</h3>
+            <button class="btn-icon-xs toggle-section-btn"><i data-lucide="chevron-down"></i></button>
+          </div>
+          <div id="sectionLayers" class="section-body">
+            <!-- Overlays -->
+            <div class="toggle-control">
+              <label class="switch switch-sm">
+                <input type="checkbox" id="overtureToggle" checked>
+                <span class="slider round"></span>
+              </label>
+              <span>Building Footprints</span>
+            </div>
+            <div class="toggle-control">
+              <label class="switch switch-sm">
+                <input type="checkbox" id="tilingToggle" checked>
+                <span class="slider round"></span>
+              </label>
+              <span>Sub-Grid Tiling</span>
+            </div>
+
+            <!-- Uploaded Vector Layers -->
+            <div class="layer-group-header">
+              <span><i data-lucide="map"></i> Uploaded Boundaries</span>
+            </div>
+            <div id="uploadedLayersList" class="uploaded-layers-list">
+              <p class="empty-state">No custom boundaries uploaded</p>
+            </div>
+
+            <!-- Computed Index Layers -->
+            <div class="layer-group-header">
+              <span><i data-lucide="sun"></i> Computed Index Overlays</span>
+            </div>
+            <div id="indexLayerToggles" class="index-layer-list">
+              <p class="empty-state">Run compute to enable index layers</p>
+            </div>
           </div>
         </div>
 
-        <!-- Export -->
+        <!-- 4. Compact Data Export -->
         <div class="panel-section">
-          <h3><i data-lucide="download"></i> Data Export</h3>
-          <button id="btnExportGeoJSON" class="btn btn-primary btn-full"><i data-lucide="database"></i> Buildings (.GeoJSON)</button>
-          <button id="btnExportCSV" class="btn btn-secondary btn-full"><i data-lucide="file-spreadsheet"></i> Scores Table (.CSV)</button>
-          <button id="btnExportSTAC" class="btn btn-secondary btn-full"><i data-lucide="file-json"></i> STAC Metadata (.JSON)</button>
-          <button id="btnExportParquet" class="btn btn-secondary btn-full"><i data-lucide="hard-drive"></i> GeoParquet (.parquet)</button>
-          <button id="btnExportTIFF" class="btn btn-secondary btn-full"><i data-lucide="image"></i> Raster (.TIFF)</button>
-          <a id="btnOpenReport" href="./executive_report.html" target="_blank" class="btn btn-secondary btn-full export-link"><i data-lucide="external-link"></i> Executive Report (.HTML)</a>
+          <div class="section-header" data-target="sectionExport">
+            <h3><i data-lucide="download"></i> Data Export</h3>
+            <button class="btn-icon-xs toggle-section-btn"><i data-lucide="chevron-down"></i></button>
+          </div>
+          <div id="sectionExport" class="section-body">
+            <div class="export-grid">
+              <button id="btnExportGeoJSON" class="btn-export" title="Download GeoJSON vector geometries">
+                <i data-lucide="database"></i>
+                <span>GeoJSON</span>
+              </button>
+              <button id="btnExportCSV" class="btn-export" title="Download CSV building metrics table">
+                <i data-lucide="file-spreadsheet"></i>
+                <span>CSV Table</span>
+              </button>
+              <button id="btnExportParquet" class="btn-export" title="Download fast columnar GeoParquet">
+                <i data-lucide="hard-drive"></i>
+                <span>Parquet</span>
+              </button>
+              <button id="btnExportTIFF" class="btn-export" title="Download GeoTIFF raster">
+                <i data-lucide="image"></i>
+                <span>GeoTIFF</span>
+              </button>
+              <button id="btnExportSTAC" class="btn-export" title="Download STAC 1.0 item collection">
+                <i data-lucide="file-json"></i>
+                <span>STAC JSON</span>
+              </button>
+              <a id="btnOpenReport" href="./executive_report.html" target="_blank" class="btn-export" title="Open executive analytics HTML report">
+                <i data-lucide="external-link"></i>
+                <span>Report HTML</span>
+              </a>
+            </div>
+          </div>
         </div>
 
       </aside>
+
+      <!-- Sidebar Drag Resizer Handle -->
+      <div id="sidebarResizer" class="sidebar-resizer" title="Drag to adjust sidebar width"></div>
 
       <!-- Map & Dashboard Viewport -->
       <section class="viewport">
@@ -197,8 +315,9 @@
     </main>
   </div>
 
-  <!-- Leaflet JS -->
+  <!-- Leaflet JS & Geoman Draw Toolkit -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

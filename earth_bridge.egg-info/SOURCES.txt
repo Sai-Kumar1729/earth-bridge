@@ -16,7 +16,6 @@ earthbridge/overture_engine.py
 earthbridge/overture_join.py
 earthbridge/planetary_sync.py
 earthbridge/report_engine.py
-earthbridge/report_generator.py
 earthbridge/spectral_indexes.py
 earthbridge/stac_engine.py
 earthbridge/stac_reader.py

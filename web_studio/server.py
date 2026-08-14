@@ -94,6 +94,8 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             self._handle_export_tif()
         elif self.path == '/api/export_parquet':
             self._handle_export_parquet()
+        elif self.path == '/api/gee_status':
+            self._handle_gee_status()
         else:
             super().do_GET()
             
@@ -110,6 +112,8 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
                 self._handle_compute()
             elif self.path == '/api/upload_shapefile':
                 self._handle_upload_shapefile()
+            elif self.path == '/api/init_gee':
+                self._handle_init_gee()
             else:
                 self.send_error_response(404, "Endpoint not found")
         except Exception as e:
@@ -118,6 +122,31 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             
         elapsed = time.time() - start
         print(f'[earth-bridge] {self.command} {self.path} completed in {elapsed:.2f}s')
+
+    def _handle_gee_status(self):
+        """Return live Earth Engine authentication and connection status."""
+        self._send_success_response({
+            "initialized": gee_engine.initialized,
+            "project_id": os.environ.get("EE_PROJECT_ID", ""),
+            "error": gee_engine.init_error
+        })
+
+    def _handle_init_gee(self):
+        """Authenticate / Reconnect Google Earth Engine with a GCP Project ID."""
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length)
+        data = json.loads(body)
+        project_id = data.get('project_id', '').strip()
+        
+        success, message = gee_engine.reconnect(project_id)
+        if success:
+            self._send_success_response({
+                "status": "success",
+                "message": message,
+                "project_id": project_id
+            })
+        else:
+            self.send_error_response(400, f"GEE Initialization Failed: {message}")
 
     def _handle_export_geojson(self):
         """Export the latest GeoDataFrame as GeoJSON."""
@@ -273,59 +302,196 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             self.send_error_response(500, f"Error exporting Parquet: {str(e)}")
 
     def _handle_upload_shapefile(self):
-        """Parse proper multipart file upload."""
+        """Parse multipart file upload supporting ZIP, SHP (+ SHX/DBF/PRJ), GeoJSON, KML, GPKG."""
         global LATEST_GDF
+        import email
+        import email.policy
+        import tempfile
+        import shutil
+        import zipfile
+        
         content_type = self.headers.get('Content-Type', '')
         content_length = int(self.headers.get('Content-Length', 0))
         
-        file_body = self.rfile.read(content_length)
-        if 'multipart/form-data' in content_type:
-            try:
-                boundary = content_type.split("boundary=")[1].encode()
-                parts = file_body.split(b"--" + boundary)
-                for part in parts:
-                    if b'filename=' in part:
-                        header_end = part.find(b"\r\n\r\n")
-                        if header_end != -1:
-                            file_body = part[header_end+4:-2] # drop leading \r\n\r\n and trailing \r\n
-                            break
-            except Exception as e:
-                self.send_error_response(400, f"Failed to parse multipart form: {e}")
-                return
-            
-        if not file_body:
-            self.send_error_response(400, "No file content received.")
+        if not content_type or 'multipart/form-data' not in content_type:
+            self.send_error_response(400, "Upload must be multipart/form-data")
             return
             
-        # Parse shapefile body
+        file_body = self.rfile.read(content_length)
+        if not file_body:
+            self.send_error_response(400, "Empty payload received.")
+            return
+
+        temp_dir = tempfile.mkdtemp(prefix="eb_upload_")
         try:
-            temp_path = os.path.join(STUDIO_DIR, "temp_upload.zip")
-            if file_body.startswith(b'PK'):
-                with open(temp_path, "wb") as f:
-                    f.write(file_body)
-                gdf = gpd.read_file(temp_path)
-            else:
-                temp_path = os.path.join(STUDIO_DIR, "temp_upload.geojson")
-                with open(temp_path, "wb") as f:
-                    f.write(file_body)
-                gdf = gpd.read_file(temp_path)
-                
-            LATEST_GDF = gdf
+            # Reconstruct full HTTP multipart payload with headers for email parser
+            header_bytes = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode('latin1')
+            msg = email.message_from_bytes(header_bytes + file_body, policy=email.policy.default)
             
-            # Reproject to WGS84 if needed
-            if gdf.crs != "EPSG:4326":
+            saved_files = []
+            for part in (msg.iter_attachments() if hasattr(msg, 'iter_attachments') else msg.walk()):
+                filename = part.get_filename()
+                if not filename:
+                    cd = part.get('Content-Disposition', '')
+                    if 'filename=' in cd:
+                        for token in cd.split(';'):
+                            token = token.strip()
+                            if token.startswith('filename='):
+                                filename = token.split('=', 1)[1].strip(' "')
+                                break
+                if filename:
+                    clean_name = os.path.basename(filename)
+                    out_path = os.path.join(temp_dir, clean_name)
+                    
+                    payload = part.get_payload(decode=True)
+                    if payload is None:
+                        payload = part.get_payload()
+                        if isinstance(payload, str):
+                            payload = payload.encode('utf-8', errors='surrogateescape')
+                    
+                    if payload:
+                        with open(out_path, "wb") as f:
+                            f.write(payload)
+                        saved_files.append(out_path)
+
+            # Fallback boundary parsing if email parser found no attachments
+            if not saved_files:
+                boundary = None
+                for param in content_type.split(';'):
+                    param = param.strip()
+                    if param.startswith('boundary='):
+                        boundary = param.split('=', 1)[1].strip('"').encode('latin1')
+                if boundary:
+                    parts = file_body.split(b'--' + boundary)
+                    for p in parts:
+                        if b'filename=' in p:
+                            try:
+                                h_end = p.find(b'\r\n\r\n')
+                                if h_end != -1:
+                                    header_section = p[:h_end].decode('latin1', errors='ignore')
+                                    fn = None
+                                    for line in header_section.split('\r\n'):
+                                        if 'filename=' in line:
+                                            fn = line.split('filename=', 1)[1].strip(' "')
+                                            break
+                                    if fn:
+                                        clean_fn = os.path.basename(fn)
+                                        data = p[h_end+4:]
+                                        if data.endswith(b'\r\n'):
+                                            data = data[:-2]
+                                        out_p = os.path.join(temp_dir, clean_fn)
+                                        with open(out_p, 'wb') as f:
+                                            f.write(data)
+                                        saved_files.append(out_p)
+                            except Exception:
+                                pass
+
+            if not saved_files:
+                self.send_error_response(400, "No valid files extracted from upload.")
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return
+
+            shp_file = None
+            zip_file = None
+            geo_file = None
+
+            for fpath in saved_files:
+                lname = fpath.lower()
+                if lname.endswith('.zip'):
+                    zip_file = fpath
+                elif lname.endswith('.shp'):
+                    shp_file = fpath
+                elif lname.endswith(('.geojson', '.json', '.gpkg', '.kml')):
+                    geo_file = fpath
+
+            gdf = None
+
+            # 1. Handle ZIP archives
+            if zip_file:
+                extract_dir = os.path.join(temp_dir, "extracted")
+                os.makedirs(extract_dir, exist_ok=True)
+                try:
+                    with zipfile.ZipFile(zip_file, 'r') as z:
+                        z.extractall(extract_dir)
+                except Exception as ze:
+                    self.send_error_response(400, f"Corrupted or invalid zip file: {ze}")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return
+
+                found_shp = None
+                found_geo = None
+                for root, _, files in os.walk(extract_dir):
+                    for file in files:
+                        fl = file.lower()
+                        if fl.endswith('.shp'):
+                            found_shp = os.path.join(root, file)
+                        elif fl.endswith(('.geojson', '.json', '.gpkg', '.kml')):
+                            found_geo = os.path.join(root, file)
+                
+                target = found_shp or found_geo
+                if not target:
+                    self.send_error_response(400, "No supported spatial vector layer (.shp, .geojson, .gpkg) found inside the zip archive.")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return
+                
+                try:
+                    gdf = gpd.read_file(target)
+                except Exception:
+                    gdf = gpd.read_file(target, engine='fiona')
+
+            # 2. Handle direct Shapefile upload
+            elif shp_file:
+                base = os.path.splitext(shp_file)[0]
+                if not (os.path.exists(base + '.shx') or os.path.exists(base + '.SHX')):
+                    self.send_error_response(400, "Missing .shx file! A Shapefile requires at least .shp, .shx, and .dbf files. Please upload all files together or upload a .zip containing them.")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return
+                try:
+                    gdf = gpd.read_file(shp_file)
+                except Exception:
+                    gdf = gpd.read_file(shp_file, engine='fiona')
+
+            # 3. Handle direct GeoJSON / GPKG / KML
+            elif geo_file:
+                try:
+                    gdf = gpd.read_file(geo_file)
+                except Exception:
+                    gdf = gpd.read_file(geo_file, engine='fiona')
+
+            if gdf is None or len(gdf) == 0:
+                self.send_error_response(400, "Parsed spatial file contains 0 valid geometries.")
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return
+
+            # Ensure valid Coordinate Reference System
+            if gdf.crs is None:
+                gdf = gdf.set_crs("EPSG:4326")
+            elif gdf.crs != "EPSG:4326":
                 gdf = gdf.to_crs("EPSG:4326")
-                LATEST_GDF = gdf
-                
-            bounds = gdf.total_bounds
-            
+
+            LATEST_GDF = gdf
+            bounds = gdf.total_bounds.tolist() # [minx, miny, maxx, maxy]
+
+            # Return simplified geojson payload if too large for browser performance
+            export_gdf = gdf
+            if len(gdf) > 5000:
+                export_gdf = gdf.sample(5000)
+
+            geojson_str = export_gdf.to_json()
+
             self._send_success_response({
                 "status": "success",
                 "message": f"Successfully loaded {len(gdf)} features.",
-                "bbox": [bounds[0], bounds[1], bounds[2], bounds[3]]
+                "bbox": [bounds[0], bounds[1], bounds[2], bounds[3]],
+                "geojson": geojson_str
             })
+
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
         except Exception as e:
-            self.send_error_response(500, f"Error parsing spatial file: {e}")
+            traceback.print_exc()
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            self.send_error_response(500, f"Error parsing spatial file: {str(e)}")
 
     def _handle_compute(self):
         """Wire up real STAC COG raster pipeline and GEE engines."""
@@ -344,42 +510,60 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             
         LATEST_INDEX = index_type
         
-        # 1. Fetch Buildings
+        # 1. MODIS Tree Canopy Cover (TCC) via Microsoft Planetary Computer (Zero Auth)
+        if index_type in ['modis_tcc', 'tcc']:
+            print(f"[earth-bridge] Fetching MODIS Tree Canopy Cover (TCC) from Planetary Computer for {city_name}...")
+            result = stac_engine.fetch_modis_tcc_from_mpc(bbox=bbox)
+            
+            self._send_success_response({
+                "status": result.get("status", "success"),
+                "provider": result.get("provider", "Microsoft Planetary Computer"),
+                "tile_url": result.get("tile_url"),
+                "stats": result.get("stats", {}),
+                "layer_name": result.get("layer_name", "MODIS Tree Canopy Cover (250m)"),
+                "city": city_name,
+                "message": result.get("message")
+            })
+            return
+
+        # 2. MODIS True Color Composite via GEE
+        if index_type in ['modis_true_color', 'modis_rgb']:
+            print(f"[earth-bridge] Fetching MODIS True Color Composite for {city_name}...")
+            result = gee_engine.compute_modis_true_color(bbox=bbox)
+            
+            self._send_success_response({
+                "status": result.get("status", "success"),
+                "provider": result.get("provider", "Google Earth Engine"),
+                "tile_url": result.get("tile_url"),
+                "stats": result.get("stats", {}),
+                "layer_name": "MODIS True Color Composite (500m)",
+                "city": city_name,
+                "message": result.get("message")
+            })
+            return
+
+        # 3. LST Climatology Anomaly via GEE
+        if index_type in ['lst_anomaly', 'lst']:
+            print("[earth-bridge] Triggering GEE LST Computation...")
+            result = gee_engine.compute_lst_climatology_anomaly(bbox=bbox)
+            
+            self._send_success_response({
+                "status": result.get("status", "success"),
+                "provider": result.get('provider', 'GEE'),
+                "tile_url": result.get('tile_url'),
+                "stats": result.get('stats', {}),
+                "layer_name": "LST 10-Yr Anomaly (1km)",
+                "city": city_name,
+                "message": result.get("message")
+            })
+            return
+
+        # 4. Building-level Footprints & High-Res Local Indices (Sentinel-2)
         if LATEST_GDF is None:
-            # Fetch from Overture if no boundary/buildings were uploaded
             print("[earth-bridge] Fetching live overture footprints...")
             LATEST_GDF = overture_engine.fetch_building_footprints(bbox=bbox, limit=1000)
             
         bldg_count = len(LATEST_GDF) if LATEST_GDF is not None else 0
-            
-        # 2. Raster processing
-        if index_type in ['lst_anomaly', 'lst']:
-            # Handle LST anomaly via GEE
-            print("[earth-bridge] Triggering GEE LST Computation...")
-            result = gee_engine.compute_lst_climatology_anomaly(bbox=bbox)
-            
-            # Use real zonal stats if GEE is available
-            if LATEST_GDF is not None and result.get('status') == 'success' and result.get('tile_url'):
-                # For GEE LST, we use the computed anomaly stats
-                # In production, would sample from EE asset
-                stats_val = result.get('stats', {})
-                if stats_val:
-                    LATEST_GDF[f'{index_type}_mean'] = [float(stats_val.get('mean', 0))] * len(LATEST_GDF)
-            
-            self._send_success_response({
-                "status": "success",
-                "provider": result.get('provider', 'GEE'),
-                "tile_url": result.get('tile_url'),
-                "stats": result.get('stats', {}),
-                "geojson": LATEST_GDF.to_json() if LATEST_GDF is not None else None,
-                "buildings_processed": bldg_count,
-                "city": city_name
-            })
-            
-            # Generate report
-            if LATEST_GDF is not None:
-                generate_policy_report(LATEST_GDF, city_name, os.path.join(STUDIO_DIR, "executive_report.html"))
-            return
             
         if index_type not in INDEX_REGISTRY:
             self.send_error_response(400, f"Unsupported index_type: {index_type}")
@@ -448,7 +632,7 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
 
 
 class ReusableThreadingServer(ThreadingHTTPServer):
-    allow_reuse_address = True
+    allow_reuse_address = False
 
 def start_server(port=8000):
     max_port = port + 10
