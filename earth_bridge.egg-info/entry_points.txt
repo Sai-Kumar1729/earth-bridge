@@ -1,0 +1,2 @@
+[console_scripts]
+earthbridge = earthbridge.cli:main

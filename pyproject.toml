@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "earth-bridge"
+version = "0.1.0"
+description = "Open Earth Data & Cross-Cloud STAC Engine bridging Google Earth Engine, Microsoft Planetary Computer, and Overture Maps Foundation."
+readme = "README.md"
+authors = [{ name = "Open GeoAI Developer", email = "developer@opengeo.ai" }]
+license = "MIT"
+keywords = ["gis", "earth-observation", "google-earth-engine", "planetary-computer", "overture-maps", "stac", "remote-sensing", "rasterio", "geopandas"]
+dependencies = [
+    "numpy>=1.22",
+    "pandas>=1.5",
+    "geopandas>=0.12",
+    "shapely>=2.0",
+    "duckdb>=0.9"
+]
+
+[project.optional-dependencies]
+gee = ["earthengine-api>=0.1.370"]
+stac = ["pystac-client>=0.6", "planetary-computer>=1.0", "rasterio>=1.3"]
+all = ["earthengine-api>=0.1.370", "pystac-client>=0.6", "planetary-computer>=1.0", "rasterio>=1.3"]
+
+[tool.setuptools.packages.find]
+include = ["earthbridge*"]
+
+[project.scripts]
+earthbridge = "earthbridge.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/open-geo/earth-bridge"
+Documentation = "https://github.com/open-geo/earth-bridge#readme"
+Repository = "https://github.com/open-geo/earth-bridge.git"

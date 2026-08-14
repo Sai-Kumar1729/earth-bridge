@@ -1,0 +1,7 @@
+numpy>=1.22
+pandas>=1.5
+geopandas>=0.12
+shapely>=2.0
+duckdb>=0.9
+pystac>=1.8
+earthengine-api>=0.1.370

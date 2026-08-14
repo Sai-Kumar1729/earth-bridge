@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>earth-bridge Studio | Cross-Cloud Spatial Intelligence Platform</title>
+  <meta name="description" content="Production spatial analytics platform bridging Google Earth Engine, Microsoft Planetary Computer STAC, and Overture Maps building footprints.">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Google Fonts & Lucide Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Loading Overlay -->
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="spinner"></div>
+    <p id="loadingMessage">Computing spatial indices across region...</p>
+  </div>
+
+  <!-- Error Toast Container -->
+  <div id="errorToastContainer"></div>
+
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-icon"><i data-lucide="globe"></i></div>
+        <div class="brand-text">
+          <h1>earth-bridge <span>Studio</span></h1>
+          <p>Cross-Cloud STAC Engine · GEE · Planetary Computer · Overture Maps</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-gee"><i data-lucide="cpu"></i> GEE Climatology</span>
+        <span class="badge badge-mpc"><i data-lucide="cloud"></i> STAC 1.0 COG</span>
+        <span class="badge badge-overture"><i data-lucide="layers"></i> Building Polygons</span>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="workspace">
+      <!-- Sidebar Control Panel -->
+      <aside class="sidebar">
+
+        <!-- Shapefile Upload -->
+        <div class="panel-section">
+          <h3><i data-lucide="upload-cloud"></i> Boundary Upload</h3>
+          <div id="dropZone" class="drop-zone">
+            <i data-lucide="file-plus"></i>
+            <p>Drag & drop <strong>.zip</strong> or <strong>.geojson</strong></p>
+            <input type="file" id="shapefileInput" accept=".zip,.geojson,.json" hidden>
+            <button id="btnBrowseFile" class="btn btn-secondary btn-sm">Browse Files</button>
+          </div>
+          <p id="uploadFileName" class="upload-filename"></p>
+        </div>
+
+        <!-- Manual Coordinate Entry -->
+        <div class="panel-section">
+          <h3><i data-lucide="map-pin"></i> Bounding Box Coordinates</h3>
+          <div class="coord-grid">
+            <div class="form-group">
+              <label for="coordMinLon">Min Lon (W)</label>
+              <input type="number" id="coordMinLon" class="form-control" step="0.001" value="78.350">
+            </div>
+            <div class="form-group">
+              <label for="coordMinLat">Min Lat (S)</label>
+              <input type="number" id="coordMinLat" class="form-control" step="0.001" value="17.300">
+            </div>
+            <div class="form-group">
+              <label for="coordMaxLon">Max Lon (E)</label>
+              <input type="number" id="coordMaxLon" class="form-control" step="0.001" value="78.550">
+            </div>
+            <div class="form-group">
+              <label for="coordMaxLat">Max Lat (N)</label>
+              <input type="number" id="coordMaxLat" class="form-control" step="0.001" value="17.500">
+            </div>
+          </div>
+          <button id="btnSetBbox" class="btn btn-secondary btn-full"><i data-lucide="crosshair"></i> Set Extent & Zoom</button>
+        </div>
+
+        <!-- Index Selector -->
+        <div class="panel-section">
+          <h3><i data-lucide="sliders"></i> Satellite Index</h3>
+          <div class="form-group">
+            <label for="indexSelect">Spectral Index / Climatology</label>
+            <select id="indexSelect" class="form-control">
+              <option value="ndvi" selected>NDVI — Vegetation Health</option>
+              <option value="ndwi">NDWI — Water Saturation</option>
+              <option value="lswi">LSWI — Land Surface Water</option>
+              <option value="nbr">NBR — Burn Ratio</option>
+              <option value="ndbi">NDBI — Built-up Urban</option>
+              <option value="lst_anomaly">LST Anomaly — 10yr Thermal Deviation (GEE)</option>
+            </select>
+          </div>
+          <button id="btnRunCompute" class="btn btn-primary btn-full"><i data-lucide="play"></i> Run Spatial Compute</button>
+        </div>
+
+        <!-- Layer Toggles -->
+        <div class="panel-section">
+          <h3><i data-lucide="grid-3x3"></i> Map Layers</h3>
+          <div class="toggle-control">
+            <label class="switch">
+              <input type="checkbox" id="overtureToggle" checked>
+              <span class="slider round"></span>
+            </label>
+            <span>Building Footprint Polygons</span>
+          </div>
+          <div class="toggle-control">
+            <label class="switch">
+              <input type="checkbox" id="tilingToggle" checked>
+              <span class="slider round"></span>
+            </label>
+            <span>Sub-Grid Tiling Overlay</span>
+          </div>
+        </div>
+
+        <!-- Index Layer Toggles -->
+        <div class="panel-section">
+          <h3><i data-lucide="layers"></i> Computed Index Layers</h3>
+          <div id="indexLayerToggles" class="index-layer-list">
+            <p class="empty-state">Run a compute to enable index layers</p>
+          </div>
+        </div>
+
+        <!-- Export -->
+        <div class="panel-section">
+          <h3><i data-lucide="download"></i> Data Export</h3>
+          <button id="btnExportGeoJSON" class="btn btn-primary btn-full"><i data-lucide="database"></i> Buildings (.GeoJSON)</button>
+          <button id="btnExportCSV" class="btn btn-secondary btn-full"><i data-lucide="file-spreadsheet"></i> Scores Table (.CSV)</button>
+          <button id="btnExportSTAC" class="btn btn-secondary btn-full"><i data-lucide="file-json"></i> STAC Metadata (.JSON)</button>
+          <button id="btnExportParquet" class="btn btn-secondary btn-full"><i data-lucide="hard-drive"></i> GeoParquet (.parquet)</button>
+          <button id="btnExportTIFF" class="btn btn-secondary btn-full"><i data-lucide="image"></i> Raster (.TIFF)</button>
+          <a id="btnOpenReport" href="./executive_report.html" target="_blank" class="btn btn-secondary btn-full export-link"><i data-lucide="external-link"></i> Executive Report (.HTML)</a>
+        </div>
+
+      </aside>
+
+      <!-- Map & Dashboard Viewport -->
+      <section class="viewport">
+        <div id="map" class="map-container"></div>
+
+        <!-- Live Compute Results Dashboard -->
+        <div class="code-workbench">
+          <div class="tab-header">
+            <span class="dashboard-title"><i data-lucide="activity"></i> Zonal Analytics Dashboard</span>
+            <span id="computeStatusBadge" class="status-pill status-ready">Ready</span>
+          </div>
+          <div class="tab-content dashboard-content">
+            <div class="stats-grid">
+              <div class="stat-card">
+                <span class="stat-label">Index</span>
+                <span class="stat-value" id="statIndexName">—</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Raster Mean</span>
+                <span class="stat-value" id="statMean">—</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Max / Min</span>
+                <span class="stat-value" id="statRange">—</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Buildings</span>
+                <span class="stat-value" id="statBldgCount">—</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">Data Source</span>
+                <span class="stat-value" id="statProvider">—</span>
+              </div>
+            </div>
+
+            <div class="table-container">
+              <table class="data-table" id="resultsTable">
+                <thead>
+                  <tr>
+                    <th>Building ID</th>
+                    <th>Subtype</th>
+                    <th>Height</th>
+                    <th>Zonal Mean</th>
+                    <th>Vulnerability</th>
+                  </tr>
+                </thead>
+                <tbody id="tableBody">
+                  <tr><td colspan="5" class="empty-state">Select an index and click "Run Spatial Compute" to begin analysis.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
