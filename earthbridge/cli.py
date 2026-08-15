@@ -1,135 +1,200 @@
-"""
-CLI Interface for earth-bridge package
-======================================
-"""
+"""Command line interface for earth-bridge."""
 
-import sys
-import os
 import argparse
 import json
-import numpy as np
+import os
 import subprocess
+import sys
+import threading
 
-from .spectral_indexes import SpectralIndexCalculator
-from .gee_stac import GEEToSTACConverter
-from .tiling import partition_state_bbox
+from .tiling import split_bbox
 from .stac_reader import search_stac_anonymously
-from .exporter import export_open_dataset
+from .gee_stac import build_stac_item
+
+
+def _parse_bbox(text: str):
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) != 4:
+        raise argparse.ArgumentTypeError(
+            f"bbox must be 'min_lon,min_lat,max_lon,max_lat', got {text!r}."
+        )
+    try:
+        return [float(p) for p in parts]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"bbox values must be numeric, got {text!r}.")
+
 
 def find_web_studio_server() -> str:
-    """Finds web_studio/server.py across editable, virtualenv, and site-package installs on any OS."""
+    """Locate the Studio server across editable, wheel and virtualenv installs."""
+    try:
+        from web_studio import SERVER_PATH
+        if os.path.exists(SERVER_PATH):
+            return SERVER_PATH
+    except ImportError:
+        pass
+
     candidates = [
-        # 1. Editable / development source repo
         os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_studio", "server.py"),
-        # 2. Package subdirectory
         os.path.join(os.path.dirname(__file__), "web_studio", "server.py"),
-        # 3. Installed alongside package in site-packages
         os.path.join(sys.prefix, "web_studio", "server.py"),
     ]
-    for p in candidates:
-        if os.path.exists(p):
-            return os.path.abspath(p)
-    return candidates[0]
+    for path in candidates:
+        if os.path.exists(path):
+            return os.path.abspath(path)
 
-def launch_studio(port: int = 8000, open_browser: bool = True):
-    """Launches the interactive Web Studio server and opens the browser on any OS."""
+    raise FileNotFoundError(
+        "Could not find the Studio server. This usually means earth-bridge was "
+        "installed from a wheel built before 0.3.0, which omitted web_studio. "
+        "Reinstall with: pip install --upgrade --force-reinstall earth-bridge"
+    )
+
+
+def launch_studio(port: int = 8000, open_browser: bool = True) -> int:
+    """Start the Studio server and open it in a browser.
+
+    The browser is opened only once the server reports the port it actually
+    bound. It walks past busy ports, so opening the requested port immediately
+    used to land on a blank page.
+    """
     import webbrowser
-    import threading
-    import time
 
     server_path = find_web_studio_server()
-    print(f"[earth-bridge] Launching Spatial Studio on http://localhost:{port}...")
-    
-    if open_browser:
-        def _open():
-            time.sleep(1.2)
-            webbrowser.open_new_tab(f"http://localhost:{port}")
-        threading.Thread(target=_open, daemon=True).start()
+    print(f"[earth-bridge] Starting Studio from {server_path}")
 
-    subprocess.run([sys.executable, server_path])
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="earth-bridge: Open Earth Data & Cross-Cloud STAC Engine"
+    process = subprocess.Popen(
+        [sys.executable, server_path, str(port)],
+        stdout=subprocess.PIPE,
+        stderr=None,
+        text=True,
+        bufsize=1,
     )
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Command: index
-    index_parser = subparsers.add_parser("index", help="Compute spectral index from band values")
-    index_parser.add_argument("--type", choices=["ndvi", "ndwi", "lswi", "nbr", "ndbi"], default="ndvi")
-    index_parser.add_argument("--band1", type=float, required=True, help="NIR or Primary band value")
-    index_parser.add_argument("--band2", type=float, required=True, help="RED/SWIR or Secondary band value")
+    def _relay():
+        opened = False
+        for line in process.stdout:
+            if line.startswith("EARTHBRIDGE_STUDIO_URL="):
+                url = line.split("=", 1)[1].strip()
+                if open_browser and not opened:
+                    opened = True
+                    webbrowser.open_new_tab(url)
+                continue
+            sys.stdout.write(line)
 
-    # Command: gee2stac
-    gee_parser = subparsers.add_parser("gee2stac", help="Generate STAC 1.0.0 JSON metadata for GEE asset")
-    gee_parser.add_argument("--id", type=str, default="gee-sample-01")
-    gee_parser.add_argument("--bbox", type=str, default="78.4,17.3,78.5,17.4", help="min_lon,min_lat,max_lon,max_lat")
-    gee_parser.add_argument("--output", type=str, default="stac_item.json")
+    reader = threading.Thread(target=_relay, daemon=True)
+    reader.start()
 
-    # Command: partition (State-Scale BBox Grid Partitioning)
-    partition_parser = subparsers.add_parser("partition", help="Partition a state-scale BBox into memory-safe grid tiles")
-    partition_parser.add_argument("--bbox", type=str, default="78.0,17.0,79.0,18.0", help="min_lon,min_lat,max_lon,max_lat")
-    partition_parser.add_argument("--tile-size", type=float, default=0.1, help="Tile size in degrees (~11km)")
+    try:
+        return process.wait()
+    except KeyboardInterrupt:
+        process.terminate()
+        return 0
 
-    # Command: stac-search (Zero-Auth STAC Search)
-    stac_parser = subparsers.add_parser("stac-search", help="Anonymous STAC API search against MS Planetary Computer")
-    stac_parser.add_argument("--bbox", type=str, default="78.4,17.3,78.5,17.4")
-    stac_parser.add_argument("--collection", type=str, default="sentinel-2-l2a")
 
-    # Command: studio / launch
-    studio_parser = subparsers.add_parser("studio", help="Launch interactive EarthBridge Web Workbench server")
-    studio_parser.add_argument("--port", type=int, default=8000)
-    studio_parser.add_argument("--no-browser", action="store_true", help="Do not open browser automatically")
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="earthbridge",
+        description="Explore Earth observation data over a region of interest.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    p_studio = sub.add_parser("studio", help="Launch the interactive Studio in a browser")
+    p_studio.add_argument("--port", type=int, default=8000)
+    p_studio.add_argument("--no-browser", action="store_true")
+
+    p_search = sub.add_parser("search", help="List scenes covering a bounding box")
+    p_search.add_argument("--bbox", type=_parse_bbox, required=True)
+    p_search.add_argument("--collection", default="sentinel-2-l2a")
+    p_search.add_argument("--max-items", type=int, default=5)
+
+    p_index = sub.add_parser("index", help="Compute a spectral index over a bounding box")
+    p_index.add_argument("--bbox", type=_parse_bbox, required=True)
+    p_index.add_argument("--type", choices=["ndvi", "ndwi", "lswi", "nbr", "ndbi"], default="ndvi")
+    p_index.add_argument("--start-date", default="2024-01-01")
+    p_index.add_argument("--end-date", default="2024-06-01")
+
+    p_part = sub.add_parser("partition", help="Split a bounding box into grid tiles")
+    p_part.add_argument("--bbox", type=_parse_bbox, required=True)
+    p_part.add_argument("--tile-size", type=float, default=0.1)
+
+    p_stac = sub.add_parser("stac-item", help="Write a STAC 1.0.0 Item JSON file")
+    p_stac.add_argument("--id", default="item-01")
+    p_stac.add_argument("--bbox", type=_parse_bbox, required=True)
+    p_stac.add_argument("--datetime", default="2026-01-01T00:00:00Z")
+    p_stac.add_argument("--output", default="stac_item.json")
 
     args = parser.parse_args()
 
-    if args.command == "index":
-        b1, b2 = np.array([args.band1]), np.array([args.band2])
-        if args.type == "ndvi":
-            val = SpectralIndexCalculator.ndvi(b1, b2)[0]
-        elif args.type == "ndwi":
-            val = SpectralIndexCalculator.ndwi(b1, b2)[0]
-        elif args.type == "lswi":
-            val = SpectralIndexCalculator.lswi(b1, b2)[0]
-        elif args.type == "nbr":
-            val = SpectralIndexCalculator.nbr(b1, b2)[0]
-        else:
-            val = SpectralIndexCalculator.ndbi(b1, b2)[0]
-        print(f"[earth-bridge] Calculated {args.type.upper()}: {val:.4f}")
+    if args.command == "studio":
+        return launch_studio(port=args.port, open_browser=not args.no_browser)
 
-    elif args.command == "gee2stac":
-        bbox_coords = [float(x.strip()) for x in args.bbox.split(",")]
-        converter = GEEToSTACConverter()
-        item = converter.image_to_stac_item(
-            item_id=args.id,
-            bbox=bbox_coords,
-            geometry={"type": "Polygon", "coordinates": [[[bbox_coords[0], bbox_coords[1]], [bbox_coords[2], bbox_coords[1]], [bbox_coords[2], bbox_coords[3]], [bbox_coords[0], bbox_coords[3]], [bbox_coords[0], bbox_coords[1]]]]},
-            datetime_utc="2026-08-01T10:30:00Z",
-            assets={"B4": {"href": "https://earthengine.googleapis.com/sample_b4.tif", "type": "image/tiff"}},
-            properties={"eo:cloud_cover": 3.2}
+    if args.command == "search":
+        res = search_stac_anonymously(
+            args.bbox, collection=args.collection, max_items=args.max_items
         )
-        converter.export_stac_json(item, args.output)
-        print(f"[earth-bridge] Successfully exported STAC item metadata to: {args.output}")
+        if res["status"] != "success":
+            print(f"[earth-bridge] {res.get('message')}")
+            return 1
+        print(f"[earth-bridge] {res['count']} scene(s) in {args.collection}:")
+        for item in res["items"]:
+            cloud = item.get("cloud_cover")
+            cloud_str = f"{cloud:.1f}% cloud" if isinstance(cloud, (int, float)) else "cloud n/a"
+            print(f"  {item['id']}  {item['datetime']}  {cloud_str}")
+        return 0
 
-    elif args.command == "partition":
-        bbox_coords = [float(x.strip()) for x in args.bbox.split(",")]
-        tiles = partition_state_bbox(bbox_coords, tile_size_deg=args.tile_size)
-        print(f"[earth-bridge] Partitioned state BBox {bbox_coords} into {len(tiles)} memory-safe grid tiles.")
-        for t in tiles[:3]:
-            print(f" -> {t['tile_id']}: BBox {t['bbox']}")
+    if args.command == "index":
+        # Imported here so the other subcommands do not pay for geopandas.
+        from . import compute_index
+        res = compute_index(
+            bbox=args.bbox, index=args.type,
+            start_date=args.start_date, end_date=args.end_date,
+        )
+        if res.get("status") != "success":
+            print(f"[earth-bridge] {args.type.upper()} unavailable: {res.get('reason')}")
+            if res.get("remedy"):
+                print(f"               {res['remedy']}")
+            return 1
+        stats = res.get("stats") or {}
+        mean = stats.get("mean", res.get("index_mean"))
+        print(f"[earth-bridge] {args.type.upper()} mean {mean}")
+        prov = res.get("provenance") or {}
+        print(f"               source: {prov.get('backend')} / {prov.get('collection')}")
+        for note in prov.get("notes", []):
+            print(f"               note: {note}")
+        return 0
 
-    elif args.command == "stac-search":
-        bbox_coords = [float(x.strip()) for x in args.bbox.split(",")]
-        res = search_stac_anonymously(bbox_coords, collection=args.collection)
-        print(f"[earth-bridge Zero-Auth STAC] Search Status: {res['status']} | Found {res['count']} items.")
-        for item in res["items"][:3]:
-            print(f" -> Item ID: {item['id']} | Date: {item['datetime']} | Cloud Cover: {item['cloud_cover']}%")
+    if args.command == "partition":
+        tiles = split_bbox(args.bbox, tile_size_deg=args.tile_size)
+        first = tiles[0]["approx_km"]
+        print(
+            f"[earth-bridge] {len(tiles)} tiles of about "
+            f"{first['width']} x {first['height']} km."
+        )
+        for tile in tiles[:3]:
+            print(f"  {tile['tile_id']}: {tile['bbox']}")
+        if len(tiles) > 3:
+            print(f"  ... and {len(tiles) - 3} more")
+        return 0
 
-    elif args.command in ["studio", "launch"]:
-        launch_studio(port=args.port, open_browser=not getattr(args, "no_browser", False))
+    if args.command == "stac-item":
+        lon0, lat0, lon1, lat1 = args.bbox
+        path = build_stac_item(
+            item_id=args.id,
+            bbox=args.bbox,
+            geometry={
+                "type": "Polygon",
+                "coordinates": [[[lon0, lat0], [lon1, lat0], [lon1, lat1],
+                                 [lon0, lat1], [lon0, lat0]]],
+            },
+            datetime_utc=args.datetime,
+            assets={},
+            output_path=args.output,
+        )
+        print(f"[earth-bridge] Wrote STAC Item to {os.path.abspath(path)}")
+        return 0
 
-    else:
-        parser.print_help()
+    parser.print_help()
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

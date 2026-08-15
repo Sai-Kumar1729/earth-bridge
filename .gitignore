@@ -22,3 +22,4 @@ ENV/
 *.tmp
 temp/
 scratch/
+build/

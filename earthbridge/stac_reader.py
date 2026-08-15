@@ -1,7 +1,8 @@
 """
-Zero-Auth STAC Query & COG Metadata Reader
-==========================================
-Queries Microsoft Planetary Computer STAC anonymously with zero credentials or API keys.
+Anonymous STAC search against Microsoft Planetary Computer.
+
+Catalogue search needs no credentials. Reading the assets it points at is a
+separate matter and currently does require them; see `STACBackend`.
 """
 
 from typing import List, Dict, Any, Optional

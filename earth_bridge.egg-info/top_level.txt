@@ -1,2 +1,0 @@
-earthbridge
-web_studio
