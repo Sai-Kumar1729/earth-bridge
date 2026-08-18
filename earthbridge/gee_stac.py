@@ -1,11 +1,11 @@
 """
-Build STAC 1.0.0 Item JSON from values you supply.
+Build STAC 1.0.0 Item JSON from supplied values.
 
 This is a document builder, not a reader. It does not connect to Earth Engine
-or introspect an asset; every field in the output comes from an argument you
-pass. It was previously named `GEEToSTACConverter`, which implied it could
-convert an Earth Engine asset into STAC on its own. It cannot, and that
-capability is not in this release.
+or introspect an asset; every field in the output originates from a supplied
+argument. It was previously named `GEEToSTACConverter`, which implied that it
+could convert an Earth Engine asset into STAC independently. It cannot, and that
+capability is not present in this release.
 """
 
 from typing import Dict, Any, List, Optional, Union

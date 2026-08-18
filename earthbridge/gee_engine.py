@@ -239,7 +239,7 @@ class EarthEngineBackend:
         except Exception as e:
             return unavailable(
                 reason=f"Earth Engine error computing MOD44B: {e}",
-                remedy="Check that your Cloud project has the Earth Engine API enabled.",
+                remedy="Confirm that the configured Cloud project has the Earth Engine API enabled.",
             )
 
     def compute_modis_true_color(

@@ -1,12 +1,12 @@
 """
-Example 03 — Display tiles and measured values are not the same thing.
+Example 03 — Distinguishing display tiles from measured values.
 
-A tile layer is rendered imagery. You can look at it; you cannot read a number
-off it. A measured statistic comes from reducing actual pixel values over your
-region, which currently means Earth Engine.
+A tile layer is rendered imagery: it can be displayed, but no numeric value can
+be read from it. A measured statistic is derived by reducing pixel values over
+the requested region, which currently requires Earth Engine.
 
-This example requests both and shows what each one gives you, including the case
-where the measurement is unavailable.
+This example requests both and reports the result of each, including the case in
+which the measurement is unavailable.
 
 Run:  python examples/03_tiles_versus_measurements.py
 """

@@ -23,3 +23,8 @@ ENV/
 temp/
 scratch/
 build/
+
+# Example output
+stac_item.json
+*.geojson
+map_report.html

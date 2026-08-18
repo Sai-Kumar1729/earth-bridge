@@ -42,7 +42,7 @@ def main() -> int:
     report = eb.report(buildings, city_name="Hyderabad buildings", output="buildings_map.html")
     print(f"  wrote {report}")
 
-    # If you are redistributing under a specific licence, do not accept a
+    # Where redistribution under a specific licence is required, do not accept a
     # substitute source silently.
     print("\nRequiring Overture specifically (no OpenStreetMap fallback):")
     strict = eb.fetch_buildings(BBOX, limit=200, allow_osm_fallback=False)

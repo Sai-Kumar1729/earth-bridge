@@ -1,10 +1,10 @@
 """
 earth-bridge Studio — local HTTP server backing the browser UI.
 
-Binds to loopback only. This process holds live Google Earth Engine credentials
-and accepts file uploads, and it has no authentication, so it must not be
-reachable from the network. Set EARTHBRIDGE_STUDIO_HOST to override only if you
-understand that.
+Binds to loopback only. The process holds live Google Earth Engine credentials
+and accepts file uploads without authentication, and must therefore not be
+reachable from the network. EARTHBRIDGE_STUDIO_HOST overrides the bind address
+and should be set only where that exposure is understood and intended.
 """
 
 import os

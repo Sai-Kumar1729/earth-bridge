@@ -1,51 +1,51 @@
 # earth-bridge
 
-Define a region of interest and find out what Earth observation data exists over
-it — across Microsoft Planetary Computer, NASA GIBS, Google Earth Engine and
-Overture Maps, from one Python API and a local browser workbench.
+A Python interface for discovering and retrieving Earth observation data over a
+region of interest across Microsoft Planetary Computer, NASA GIBS, Google Earth
+Engine, and Overture Maps, with a local browser workbench.
 
 [![PyPI](https://img.shields.io/pypi/v/earth-bridge?color=blue)](https://pypi.org/project/earth-bridge/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-brightgreen.svg)](https://python.org)
 
-> **Alpha.** This is a reconnaissance tool: it answers *what data is here and what
-> does it look like*, not *what is the value*. Measured statistics currently
-> require Google Earth Engine. Read [Scope and limits](#scope-and-limits) before
-> depending on it for anything, and [ROADMAP.md](ROADMAP.md) for what is being
-> built next and what has been ruled out.
+> **Alpha release.** This library performs data discovery: it reports which
+> observations exist over a region and renders them for display. It does not
+> currently derive measured values without Google Earth Engine. Review
+> [Scope and limitations](#scope-and-limitations) before use, and
+> [ROADMAP.md](ROADMAP.md) for planned work and excluded functionality.
 
 ---
 
-## Install
+## Installation
 
 ```bash
 pip install earth-bridge                 # core: search, tiles, buildings, export
-pip install 'earth-bridge[gee]'          # + Earth Engine, for measured statistics
-pip install 'earth-bridge[overture]'     # + DuckDB, for Overture building reads
-pip install 'earth-bridge[all]'          # everything
+pip install 'earth-bridge[gee]'          # adds Earth Engine, for measured statistics
+pip install 'earth-bridge[overture]'     # adds DuckDB, for Overture building reads
+pip install 'earth-bridge[all]'          # all optional dependencies
 ```
 
-## Launch the workbench
+## Workbench
 
 ```bash
 earthbridge studio
 ```
 
-Draw a box or upload a boundary, pick a product, and see it on the map. The
-server binds to loopback only.
+The workbench accepts a drawn bounding box or an uploaded boundary, retrieves the
+selected product, and displays it on a map. The server binds to loopback only.
 
 ---
 
-## Two kinds of result
+## Result types
 
-This distinction runs through the whole library, and getting it wrong is the
-easiest way to misread output.
+The library returns two distinct categories of result. Confusing them is the most
+common source of misinterpretation.
 
 | | Tile layer | Measured statistics |
 |---|---|---|
-| What it is | Rendered PNG/JPEG imagery | Numbers reduced from pixel values |
-| Credentials | None | Google Earth Engine |
-| Can you read a value? | **No** — colours are a display stretch | Yes |
+| Content | Rendered PNG or JPEG imagery | Values reduced from pixel data |
+| Credentials required | None | Google Earth Engine |
+| Pixel values retrievable | No; colours are a display stretch | Yes |
 | `result["kind"]` | `tile_layer` | `tile_layer_with_stats` |
 
 ```python
@@ -53,33 +53,33 @@ import earthbridge as eb
 
 BBOX = [78.40, 17.35, 78.50, 17.45]
 
-# No credentials. Imagery you can look at.
+# Rendered imagery, no credentials required.
 tiles = eb.get_tiles(BBOX, layer="ndvi")
-print(tiles["tile_url"])                      # XYZ template for a map
+print(tiles["tile_url"])                      # XYZ template for a map client
 print(tiles["provenance"]["collection"])      # modis-13Q1-061
 
-# Earth Engine. A number you can use.
+# Measured value, requires Earth Engine.
 result = eb.compute_index(BBOX, index="ndvi")
 if result["status"] == "success":
     print(result["stats"]["mean"])
 else:
-    print(result["reason"], "→", result["remedy"])
+    print(result["reason"], "->", result["remedy"])
 ```
 
-## What works without credentials
+## Functionality available without credentials
 
 ```python
-# Which scenes cover this area, when, and how cloudy?
+# Scene discovery: coverage, acquisition date, and cloud cover
 scenes = eb.search_stac(BBOX, collection="sentinel-2-l2a", max_items=8)
 for item in scenes["items"]:
     print(item["datetime"][:10], item["cloud_cover"], item["id"])
 
-# Building footprints, with their origin recorded
+# Building footprints, with the source recorded
 buildings = eb.fetch_buildings(BBOX, limit=500)
 print(buildings["source"].unique())                    # ['overture'] or ['openstreetmap']
 print(buildings.attrs["provenance"]["license"])
 
-# Split a large area into tiles
+# Partition a large region into tiles
 tiles = eb.partition([76.0, 12.0, 85.0, 20.0], tile_size=0.1)
 print(len(tiles), tiles[0]["approx_km"])               # degree tiles are not equal area
 
@@ -88,22 +88,24 @@ eb.export(buildings, format="geojson", output="buildings.geojson")
 eb.report(buildings, city_name="Hyderabad", output="map.html")
 ```
 
-## What needs Earth Engine
+## Functionality requiring Earth Engine
 
-Run `earthengine authenticate` once, then set a Cloud project id — either
-`EE_PROJECT_ID` in the environment, or in the Studio header.
+Run `earthengine authenticate` once, then supply a Cloud project identifier
+through the `EE_PROJECT_ID` environment variable or the Studio header.
 
 ```python
 eb.compute_index(BBOX, index="ndvi")     # also ndwi, lswi, nbr, ndbi
 eb.get_modis_tcc(BBOX, year=2020)        # percent tree canopy cover (MOD44B)
 ```
 
-Earth Engine does the cloud masking, compositing and reduction server-side, so
-local memory use stays flat regardless of area.
+Earth Engine performs cloud masking, compositing, and reduction server-side, so
+local memory consumption remains constant regardless of region size.
 
 ---
 
-## Every result carries its provenance
+## Provenance
+
+Every result carries a record of its origin:
 
 ```python
 >>> eb.get_tiles(BBOX, layer="ndvi")["provenance"]
@@ -118,12 +120,13 @@ local memory use stays flat regardless of area.
            'Tile colours are a rescaled display stretch...']}
 ```
 
-This matters most where earth-bridge falls back between providers. A building
-query can be answered by Overture or by OpenStreetMap, and those carry different
-licences — OpenStreetMap is ODbL with share-alike obligations. The fallback is
-allowed; hiding it is not. Pass `allow_osm_fallback=False` to require Overture.
+This is significant where the library falls back between providers. A building
+query may be satisfied by Overture or by OpenStreetMap, and the two carry
+different licences: OpenStreetMap is ODbL, which imposes share-alike obligations
+on derived databases. The fallback is permitted, but it is always reported. Pass
+`allow_osm_fallback=False` to require Overture.
 
-Failures carry a reason and a remedy instead of a substitute value:
+Failures return a reason and a remedy rather than a substitute value:
 
 ```python
 >>> eb.compute_index(BBOX, index="ndvi")
@@ -134,35 +137,38 @@ Failures carry a reason and a remedy instead of a substitute value:
 
 ---
 
-## Scope and limits
+## Scope and limitations
 
-Read this before relying on the output.
-
-- **Reading numeric arrays without Earth Engine does not work in this release.**
-  Planetary Computer returns HTTP 409 for anonymous reads of signed assets, so
-  the COG reader returns `status="unavailable"`. Targeted for 0.4.0.
-- **No zonal statistics.** Removed in 0.3.0 — the previous implementation
-  sampled a 3×3 window at each polygon centroid and called it exact. Use
-  [`exactextract`](https://github.com/isciences/exactextract), or Earth Engine's
-  `reduceRegions`. Returning correctly is targeted for 0.4.0.
-- **No raster export.** The GeoTIFF export was removed: it wrote random noise.
-  It will not return until there is a real raster to export.
-- **No time series.** Single composites only. Targeted for 0.5.0.
-- **Tiles are imagery.** Colours are a display stretch. Do not sample them.
-- **Degree tiles are not equal area.** 0.1° is ~11 km at the equator, ~7 km at
-  50°N. Each tile reports its own `approx_km`.
+- **Numeric array reads without Earth Engine are not functional in this
+  release.** Planetary Computer returns HTTP 409 for anonymous reads of signed
+  assets, so the COG reader returns `status="unavailable"`. Scheduled for 0.4.0.
+- **Zonal statistics are unavailable.** The previous implementation was removed
+  in 0.3.0: it sampled a 3x3 window at each polygon centroid and described the
+  result as exact. Use
+  [`exactextract`](https://github.com/isciences/exactextract) or the Earth Engine
+  `reduceRegions` method. A correct implementation is scheduled for 0.4.0.
+- **Raster export is unavailable.** The GeoTIFF export was removed because it
+  wrote randomly generated values. It will not be reinstated until the library
+  produces a genuine raster.
+- **Time series are unsupported.** Single composites only. Scheduled for 0.5.0.
+- **Tiles are rendered imagery.** Colours are a display stretch and must not be
+  sampled as data.
+- **Degree-based tiles are not equal area.** A 0.1 degree tile is approximately
+  11 km at the equator and approximately 7 km at 50 degrees north. Each tile
+  reports its own `approx_km` value.
 - **Overture reads are slow.** The buildings theme is not partitioned
-  geographically, so even a small bounding box scans Parquet metadata across the
-  whole global dataset — a city-block query measured 322 seconds. It runs in an
-  isolated subprocess (DuckDB's httpfs extension can terminate the interpreter
-  on some platforms) with a 600 s timeout, then falls back to OpenStreetMap.
-  Set `EARTHBRIDGE_OVERTURE_TIMEOUT` to change it.
+  geographically, so even a small bounding box requires scanning Parquet metadata
+  across the global dataset; a city-block query has been measured at 322 seconds.
+  The query runs in an isolated subprocess, because the DuckDB `httpfs` extension
+  can terminate the interpreter on some platforms, with a 600 second timeout
+  followed by fallback to OpenStreetMap. The timeout is configurable through
+  `EARTHBRIDGE_OVERTURE_TIMEOUT`.
 
-## CLI
+## Command line interface
 
 ```bash
 earthbridge studio                                        # launch the workbench
-earthbridge search    --bbox 78.4,17.3,78.5,17.4          # what scenes are here
+earthbridge search    --bbox 78.4,17.3,78.5,17.4          # list available scenes
 earthbridge index     --bbox 78.4,17.3,78.5,17.4 --type ndvi
 earthbridge partition --bbox 78.0,17.0,79.0,18.0 --tile-size 0.1
 earthbridge stac-item --bbox 78.4,17.3,78.5,17.4 --output item.json
@@ -171,45 +177,46 @@ earthbridge stac-item --bbox 78.4,17.3,78.5,17.4 --output item.json
 ## Examples
 
 ```bash
-python examples/01_discover_scenes.py           # what imagery exists here
-python examples/02_buildings_with_provenance.py # buildings and their licence
-python examples/03_tiles_versus_measurements.py # imagery vs measured values
+python examples/01_discover_scenes.py           # scene discovery
+python examples/02_buildings_with_provenance.py # buildings and licence terms
+python examples/03_tiles_versus_measurements.py # imagery compared with measurements
 python examples/04_stac_item.py                 # write a STAC 1.0.0 Item
 ```
 
-## Related tools
+## Related projects
 
-earth-bridge is a thin convenience layer. For serious work these are more
-capable, and often the right answer:
+earth-bridge is a convenience layer over established libraries. For specialised
+work, the following are more capable and are frequently the appropriate choice:
 
 - [`geemap`](https://github.com/gee-community/geemap) — Earth Engine in Jupyter
-- [`odc-stac`](https://github.com/opendatacube/odc-stac) / [`stackstac`](https://github.com/gjoseph92/stackstac) — STAC to xarray, done properly
-- [`spyndex`](https://github.com/awesome-spectral-indices/spyndex) — 200+ cited spectral indices
+- [`odc-stac`](https://github.com/opendatacube/odc-stac) and [`stackstac`](https://github.com/gjoseph92/stackstac) — STAC to xarray
+- [`spyndex`](https://github.com/awesome-spectral-indices/spyndex) — over 200 documented spectral indices
 - [`exactextract`](https://github.com/isciences/exactextract) — exact zonal statistics
-- [`overturemaps`](https://github.com/OvertureMaps/overturemaps-py) — official Overture CLI
+- [`overturemaps`](https://github.com/OvertureMaps/overturemaps-py) — official Overture command line tool
 
 ## Roadmap
 
-[ROADMAP.md](ROADMAP.md) tracks the whole plan as a checklist, including the
-things deliberately ruled out.
+[ROADMAP.md](ROADMAP.md) tracks planned work as a checklist, including
+functionality that has been explicitly excluded.
 
-- **0.3.0 — honesty** *(done)*. Removed everything that returned invented
-  numbers, gave every result a provenance record, and made the documented API
-  run.
-- **0.4.0 — usefulness** *(next)*. Sign Planetary Computer assets so the COG
-  reader works, and you get measured NDVI over any region on Earth with no
-  credentials at all. Plus recorded-fixture tests, CI, and real zonal statistics
-  via `exactextract`.
-- **0.5.0 — scale.** Pluggable backends, xarray output, time series, and the
-  tile partitioner wired to an executor.
-- **1.0.0 — the actual claim.** The same measurement computed through
-  independent backends and reported *with its disagreement* — where Earth
-  Engine, Planetary Computer and openEO differ over one region, and why.
+- **0.3.0 — Correctness** (released). Removed all output that was fabricated or
+  unfounded, attached a provenance record to every result, and aligned the
+  documented API with its implementation.
+- **0.4.0 — Measurement without credentials** (next). Signs Planetary Computer
+  assets so that the COG reader returns measured NDVI over any region without
+  credentials, and adds recorded-fixture tests, continuous integration, and
+  zonal statistics through `exactextract`.
+- **0.5.0 — Architecture and scale.** Pluggable backends, xarray output, time
+  series support, and the tile partitioner connected to an executor.
+- **1.0.0 — Cross-backend verification.** A single measurement computed through
+  independent backends and reported together with the divergence between them,
+  covering Earth Engine, Planetary Computer, and openEO.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md). 0.3.0 removed several features that produced
-fabricated or unfounded numbers; the rationale for each is recorded there.
+See [CHANGELOG.md](CHANGELOG.md). Release 0.3.0 removed several features that
+produced fabricated or unfounded values; the rationale for each removal is
+recorded there.
 
 ## License
 

@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "earth-bridge"
 version = "0.3.0"
-description = "One API over Google Earth Engine, Microsoft Planetary Computer, NASA GIBS and Overture Maps, where every result records its source and licence."
+description = "Earth observation data discovery across Google Earth Engine, Microsoft Planetary Computer, NASA GIBS and Overture Maps, with provenance recorded on every result."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Sai Kumar", email = "saikumarkummari1729@gmail.com" }]

@@ -1,14 +1,13 @@
 """
 STAC search and tile layers from Microsoft Planetary Computer and NASA GIBS.
 
-Two different kinds of thing come out of this module and they should not be
-confused:
+This module returns two categories of result, which should not be confused:
 
-  * **Tile layers** (`kind="tile_layer"`) are rendered PNG/JPEG imagery for
-    display on a map. They carry no retrievable pixel values. Use them to look
-    at a region, not to measure it.
+  * **Tile layers** (`kind="tile_layer"`) are rendered PNG or JPEG imagery for
+    display on a map. They carry no retrievable pixel values and are intended
+    for inspection rather than measurement.
   * **Raster arrays** (`kind="raster"`) are numeric pixel data read from Cloud
-    Optimized GeoTIFFs. These are what you can compute on.
+    Optimized GeoTIFFs, suitable for computation.
 
 At present only the first works without credentials. The COG reader is gated
 off: Planetary Computer asset signing currently returns HTTP 409 for anonymous

@@ -1,8 +1,8 @@
 """
 Example 04 — Write a STAC 1.0.0 Item describing a result.
 
-STACItemBuilder assembles the document from values you supply. It does not read
-an Earth Engine asset or introspect a file; every field below comes from an
+STACItemBuilder assembles the document from supplied values. It does not read an
+Earth Engine asset or introspect a file; every field below originates from an
 argument.
 
 Run:  python examples/04_stac_item.py

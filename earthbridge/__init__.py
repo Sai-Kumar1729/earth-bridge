@@ -1,41 +1,41 @@
 """
-earth-bridge — define a region of interest and see what Earth observation data
-exists over it.
+earth-bridge: discovery and retrieval of Earth observation data over a region of
+interest.
 
-Two kinds of result come out of this library, and the distinction matters:
+The library returns two categories of result, and the distinction is material:
 
-  * **Tile layers** are rendered imagery for display. They work without any
-    credentials, and they carry no retrievable pixel values.
-  * **Statistics** are measured numbers over your region. These currently
-    require Google Earth Engine, which computes them server-side.
+  * **Tile layers** are rendered imagery for display. They require no
+    credentials and carry no retrievable pixel values.
+  * **Statistics** are values measured over the requested region. These
+    currently require Google Earth Engine, which computes them server-side.
 
-Reading a numeric array directly from Planetary Computer COGs is not available
-in this release; anonymous asset signing returns HTTP 409. Where that path is
-requested, the library reports it rather than substituting a value.
+Direct numeric array reads from Planetary Computer COGs are not available in
+this release, as anonymous asset access returns HTTP 409. Where that path is
+requested, the library reports the condition rather than substituting a value.
 
-Every result carries a `provenance` record naming the backend, collection,
-scene, date and licence it came from.
+Every result carries a `provenance` record identifying the backend, collection,
+scene, date, and licence from which it was derived.
 
     import earthbridge as eb
 
-    # Which Sentinel-2 scenes cover this area?          (no credentials)
+    # Sentinel-2 scenes covering a region            (no credentials required)
     scenes = eb.search_stac(bbox=[78.4, 17.3, 78.5, 17.4])
 
-    # A MODIS NDVI tile layer for a map                 (no credentials)
+    # MODIS NDVI tile layer for a map client         (no credentials required)
     layer = eb.get_modis_ndvi(bbox=[78.0, 15.0, 80.0, 17.0])
 
-    # Building footprints, with their source recorded   (no credentials)
+    # Building footprints with the source recorded   (no credentials required)
     buildings = eb.fetch_buildings(bbox=[78.4, 17.3, 78.5, 17.4], limit=500)
     print(buildings["source"].unique())
 
-    # A measured NDVI value over the region             (needs Earth Engine)
+    # Measured NDVI over the region                  (requires Earth Engine)
     ndvi = eb.compute_index(bbox=[78.4, 17.3, 78.5, 17.4], index="ndvi")
 
     # Launch the interactive Studio in a browser
     eb.studio()
 
-Planned work, and the capabilities deliberately ruled out, are tracked in
-ROADMAP.md at the repository root.
+Planned work, and functionality that has been explicitly excluded, are recorded
+in ROADMAP.md at the repository root.
 """
 
 __version__ = "0.3.0"

@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-Planned work is tracked as a checklist in [ROADMAP.md](ROADMAP.md), including
-the capabilities that have been ruled out and why. The next release, 0.4.0,
-signs Planetary Computer assets so the COG reader works — measured values over
-any region with no credentials — and adds recorded-fixture tests and CI.
+Planned work is tracked as a checklist in [ROADMAP.md](ROADMAP.md), together
+with the functionality that has been explicitly excluded and the reasons for
+its exclusion. Release 0.4.0 will sign Planetary Computer assets so that the
+COG reader returns measured values without credentials, and will add
+recorded-fixture tests and continuous integration.
 
 ## 0.3.0 — Correctness release
 
@@ -63,26 +64,28 @@ derived from them should be treated as invalid.
   `output_path=` to a function whose parameters were `enriched_gdf` and
   `output_filepath`. Both spellings are now accepted.
 
-- **`eb.compute_index()` silently returned `no_data`.** The COG reader is
-  genuinely broken — Planetary Computer returns HTTP 409 for anonymous reads of
-  signed assets — but this was reported as an empty result rather than a
+- **`eb.compute_index()` returned `no_data` without explanation.** The COG
+  reader is non-functional, as Planetary Computer returns HTTP 409 for anonymous
+  reads of signed assets, but this was reported as an empty result rather than a
   failure. It now returns `status="unavailable"` with a reason and a remedy, and
   routes through Earth Engine when available.
 
-- **Overture queries silently returned OpenStreetMap data.** Different schema,
-  different licence, no indication to the caller. Results now carry a `source`
+- **Overture queries returned OpenStreetMap data without notice.** The two
+  sources differ in schema and in licence terms, and the substitution was not
+  reported to the caller. Results now carry a `source`
   column and licence terms in `gdf.attrs["provenance"]`; pass
   `allow_osm_fallback=False` to refuse the substitution.
 
-- **OpenStreetMap heights were invented.** Buildings with no height tag were
-  assigned 12 m. They are now null.
+- **OpenStreetMap heights were substituted.** Buildings with no height tag were
+  assigned a value of 12 m. They are now null.
 
 - **Three of four examples crashed on import**, referencing modules
   (`overture_join`, `planetary_sync`) deleted in an earlier release. All
   examples have been rewritten and all four run.
 
-- **`GEEToSTACConverter` never touched Earth Engine.** It built a dictionary from
-  arguments you supplied. Renamed to `STACItemBuilder`.
+- **`GEEToSTACConverter` did not access Earth Engine.** It constructed a
+  dictionary from the arguments supplied by the caller. Renamed to
+  `STACItemBuilder`.
 
 ### Fixed: remote sensing correctness
 
@@ -108,7 +111,7 @@ derived from them should be treated as invalid.
   Engine's null — meaning no unmasked pixels — into a measurement of 0.0. Empty
   reductions now return `status="unavailable"`.
 
-- **Dead emptiness check.** `if not tcc_img:` on an `ee.Image` is always false,
+- **Unreachable emptiness check.** `if not tcc_img:` on an `ee.Image` is always false,
   since server-side objects are truthy. Emptiness is now tested with
   `collection.size().getInfo()`.
 
@@ -191,7 +194,7 @@ Old names remain as aliases for one release.
 ### Also
 
 - Removed `GEE_COMMUNITY_SUBMISSION.md`, a checklist for obtaining recognition
-  from large technology companies. It did not belong in the repository.
+  from technology organisations, which was out of scope for the repository.
 - Every result now carries a `provenance` record: backend, collection, scene,
   date, native resolution, attribution and licence.
 
