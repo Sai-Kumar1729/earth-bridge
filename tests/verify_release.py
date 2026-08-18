@@ -83,13 +83,13 @@ def t_aliases():
 
 for name, fn in [
     ("get_tiles returns a tile layer", t_tiles),
-    ("compute_index reports unavailable honestly", t_compute_unavailable),
+    ("compute_index reports an unavailable status", t_compute_unavailable),
     ("search_stac finds scenes", t_search),
-    ("fetch_buildings carries source + licence", t_buildings),
+    ("fetch_buildings records source and licence", t_buildings),
     ("partition splits a large bbox", t_partition),
-    ("export geojson/parquet/csv + report", t_export_report),
+    ("export to geojson, parquet, csv, and report", t_export_report),
     ("get_modis_tcc requires Earth Engine", t_tcc_needs_gee),
-    ("zonal stats raises with guidance", t_zonal_removed),
+    ("zonal statistics raise with guidance", t_zonal_removed),
     ("deprecated aliases still resolve", t_aliases),
 ]:
     check(name, fn)
