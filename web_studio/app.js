@@ -467,14 +467,13 @@ function setupEventListeners() {
   // Compute Button
   document.getElementById('btnRunCompute').addEventListener('click', runMasterCompute);
 
+  // Building footprints
+  document.getElementById('btnFetchBuildings').addEventListener('click', fetchBuildings);
+
   // Map Layer Toggles
   document.getElementById('overtureToggle').addEventListener('change', (e) => {
     if(e.target.checked) map.addLayer(buildingsLayer);
     else map.removeLayer(buildingsLayer);
-  });
-  document.getElementById('tilingToggle').addEventListener('change', (e) => {
-    if(e.target.checked && tileLayer) map.addLayer(tileLayer);
-    else if(tileLayer) map.removeLayer(tileLayer);
   });
 
   // Manual BBox entry
@@ -588,21 +587,52 @@ function setupEventListeners() {
     }
   });
 
-  document.getElementById('btnExportTIFF').addEventListener('click', async () => {
-    try {
-      const resp = await fetch('/api/export_tif');
-      if (!resp.ok) throw new Error(await resp.text());
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'earthbridge_raster.tif';
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch(e) { 
-      showError('Export failed: ' + e.message); 
+}
+
+async function fetchBuildings() {
+  const note = document.getElementById('buildingsProvenance');
+  showLoading('Fetching building footprints...');
+  try {
+    const resp = await fetch('/api/buildings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bbox: currentBbox, limit: 2000 })
+    });
+    const data = await resp.json();
+
+    if (data.status !== 'success') {
+      note.textContent = data.reason || 'No buildings found for this area.';
+      showError(data.reason || 'No buildings found for this area.');
+      return;
     }
-  });
+
+    buildingsLayer.clearLayers();
+    buildingsLayer.addData(JSON.parse(data.geojson));
+    if (!map.hasLayer(buildingsLayer)) map.addLayer(buildingsLayer);
+
+    const prov = data.provenance || {};
+    // The source is stated plainly: an Overture request can be answered by
+    // OpenStreetMap, and the two carry different licences.
+    note.innerHTML =
+      `<strong>${data.count.toLocaleString()}</strong> features from ` +
+      `<strong>${escapeHtml(prov.attribution || (data.source || []).join(', '))}</strong>` +
+      (data.preview_count < data.count
+        ? ` (showing ${data.preview_count.toLocaleString()})` : '') +
+      `<br><span class="licence">${escapeHtml(prov.license || 'Licence unknown')}</span>`;
+
+    document.getElementById('statBldgCount').textContent = data.count.toLocaleString();
+    renderProvenance(prov, null);
+  } catch (e) {
+    showError('Could not fetch buildings: ' + e.message);
+  } finally {
+    hideLoading();
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text == null ? '' : String(text);
+  return div.innerHTML;
 }
 
 async function handleFileUpload(files) {
@@ -814,23 +844,23 @@ async function runMasterCompute() {
     });
 
     const data = await response.json();
-    
+
     if (data.status === 'error') {
-      throw new Error(data.message || 'Compute failed');
+      throw new Error(data.message || 'Request failed');
     }
 
-    if (data.message && data.compute_mode !== 'Google Earth Engine Cloud') {
-      console.log(`[earth-bridge] ${data.message}`);
+    // "unavailable" is a real answer, not a failure to report as one. It means
+    // the work could not be done, and it carries a reason and a remedy.
+    if (data.status === 'unavailable') {
+      statusBadge.className = 'status-pill status-ready';
+      statusBadge.textContent = 'Unavailable';
+      renderUnavailable(data);
+      showError(data.reason || 'That product is not available here.');
+      return;
     }
 
     updateDashboard(data, indexLabel);
-    
-    if (data.geojson) {
-      const geojsonObj = typeof data.geojson === 'string' ? JSON.parse(data.geojson) : data.geojson;
-      buildingsLayer.clearLayers();
-      buildingsLayer.addData(geojsonObj);
-    }
-    
+
     if (data.tile_url) {
       if (tileLayer) map.removeLayer(tileLayer);
       
@@ -943,99 +973,90 @@ function removeIndexLayer(indexType) {
 window.removeIndexLayer = removeIndexLayer;
 
 function updateDashboard(data, indexLabel) {
-  document.getElementById('statIndexName').textContent = data.layer_name || indexLabel.split('—')[0];
-  document.getElementById('statProvider').textContent = data.provider || 'Google Earth Engine';
-  document.getElementById('statBldgCount').textContent = data.buildings_processed ? `${data.buildings_processed} polygons` : 'Regional ROI (250m)';
-  
-  let statsObj = data.stats || {};
-  
-  // 1. If real numeric statistical aggregation was computed (GEE reduceRegion or COG pixel arrays)
-  if (statsObj.mean !== undefined && typeof statsObj.mean === 'number') {
-    document.getElementById('statMean').textContent = statsObj.mean.toFixed(3);
-    const minStr = statsObj.min !== undefined ? statsObj.min.toFixed(2) : '-';
-    const maxStr = statsObj.max !== undefined ? statsObj.max.toFixed(2) : '-';
-    document.getElementById('statRange').textContent = `${minStr} — ${maxStr}`;
-  } else if (statsObj.Percent_Tree_Cover_mean !== undefined && typeof statsObj.Percent_Tree_Cover_mean === 'number') {
-    document.getElementById('statMean').textContent = `${statsObj.Percent_Tree_Cover_mean.toFixed(1)}% Canopy`;
-    document.getElementById('statRange').textContent = `${statsObj.min.toFixed(0)}% — ${statsObj.max.toFixed(0)}%`;
-  } else if (statsObj.resolution) {
-    // 2. Real Tile Stream Metadata (Resolution, Acquisition Date, Scene ID)
-    document.getElementById('statMean').textContent = statsObj.resolution;
-    document.getElementById('statRange').textContent = statsObj.datetime ? new Date(statsObj.datetime).toLocaleDateString() : 'Continuous Stream';
+  const prov = data.provenance || {};
+  const stats = data.stats || {};
+
+  document.getElementById('statIndexName').textContent = data.layer_name || indexLabel;
+  document.getElementById('statProvider').textContent = prov.attribution || prov.backend || '—';
+
+  // Only display a mean where one was actually measured. A tile layer has no
+  // retrievable values, so those cells stay empty rather than being filled with
+  // resolution strings or the word "Active".
+  if (typeof stats.mean === 'number') {
+    const suffix = data.layer_name && data.layer_name.includes('canopy') ? '%' : '';
+    document.getElementById('statMean').textContent = stats.mean.toFixed(3) + suffix;
+    const lo = typeof stats.min === 'number' ? stats.min.toFixed(2) : '—';
+    const hi = typeof stats.max === 'number' ? stats.max.toFixed(2) : '—';
+    document.getElementById('statRange').textContent = `${lo} / ${hi}`;
   } else {
-    document.getElementById('statMean').textContent = 'Active Stream';
-    document.getElementById('statRange').textContent = 'Cloud XYZ';
+    document.getElementById('statMean').textContent = 'not measured';
+    document.getElementById('statRange').textContent = '—';
   }
 
-  // Populate Table
-  const tbody = document.getElementById('tableBody');
-  if (!tbody) return;
-  tbody.innerHTML = '';
-  
-  if (!data.geojson) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-state" style="padding: 12px !important;">Active layer: <strong>${data.layer_name || 'MODIS Raster'}</strong> mapped across ROI.</td></tr>`;
-    return;
-  }
-  
-  const features = (typeof data.geojson === 'string' ? JSON.parse(data.geojson) : data.geojson).features || [];
-  if (features.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No vector features in this region.</td></tr>';
-    return;
-  }
-  
-  features.slice(0, 15).forEach(f => {
-    const props = f.properties;
-    const scoreKeys = Object.keys(props).filter(k => k.includes('_mean') || k.includes('score'));
-    const score = scoreKeys.length > 0 ? (props[scoreKeys[0]] || 0) : 0;
-    
-    let vulText = 'Moderate';
-    let vulColor = '#e3b341';
-    if(score < 0.3) { vulText = 'High Risk'; vulColor = '#f85149'; }
-    else if(score > 0.6) { vulText = 'Optimal'; vulColor = '#56d364'; }
-    
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${props.id || 'bldg_...'}</td>
-      <td style="text-transform: capitalize;">${props.subtype || 'Unknown'}</td>
-      <td>${(props.height || 0).toFixed(1)}m</td>
-      <td style="font-weight: 600;">${score.toFixed(3)}</td>
-      <td style="color: ${vulColor}; font-weight: 500;">${vulText}</td>
-    `;
-    tbody.appendChild(tr);
+  renderProvenance(prov, data);
+}
+
+function renderProvenance(prov, data) {
+  const panel = document.getElementById('provenancePanel');
+  if (!panel) return;
+
+  const rows = [
+    ['Backend', prov.attribution || prov.backend],
+    ['Collection', prov.collection],
+    ['Scene', prov.scene_id],
+    ['Date', prov.datetime],
+    ['Native resolution', prov.resolution],
+    ['Licence', prov.license]
+  ].filter(([, v]) => v);
+
+  const notes = (prov.notes || []).map(n => `<li>${escapeHtml(n)}</li>`).join('');
+  const modeNote = data && data.note
+    ? `<p class="tiles-only-note">${escapeHtml(data.note)}</p>` : '';
+
+  panel.innerHTML = `
+    ${modeNote}
+    <div class="prov-grid">
+      ${rows.map(([k, v]) =>
+        `<div class="prov-row"><span>${escapeHtml(k)}</span><span>${escapeHtml(v)}</span></div>`
+      ).join('')}
+    </div>
+    ${notes ? `<ul class="prov-notes">${notes}</ul>` : ''}
+  `;
+}
+
+function renderUnavailable(data) {
+  const panel = document.getElementById('provenancePanel');
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="unavailable-block">
+      <strong>Not available</strong>
+      <p>${escapeHtml(data.reason || '')}</p>
+      ${data.remedy ? `<p class="remedy">${escapeHtml(data.remedy)}</p>` : ''}
+    </div>
+  `;
+  ['statMean', 'statRange'].forEach(id => {
+    document.getElementById(id).textContent = '—';
   });
 }
 
-function getBuildingStyle(feature) {
-  const props = feature.properties;
-  const scoreKeys = Object.keys(props).filter(k => k.includes('_mean') || k.includes('score'));
-  const score = scoreKeys.length > 0 ? (props[scoreKeys[0]] || 0.5) : 0.5;
-
-  let color = '#d29922'; // Moderate / Yellow
-  if (score < 0.3) color = '#f85149'; // Deficit / Red
-  else if (score >= 0.6) color = '#2ea043'; // Optimal / Green
-
-  return {
-    color: color,
-    weight: 1,
-    fillColor: color,
-    fillOpacity: 0.6
-  };
+function getBuildingStyle() {
+  // A single neutral colour. Earlier versions coloured footprints red, amber and
+  // green by a "vulnerability" score that was never actually computed from the
+  // raster, so the map implied an assessment that did not exist.
+  return { color: '#58a6ff', weight: 1, fillColor: '#58a6ff', fillOpacity: 0.45 };
 }
 
 function onEachBuilding(feature, layer) {
-  const props = feature.properties;
-  const scoreKeys = Object.keys(props).filter(k => k.includes('_mean') || k.includes('score'));
-  const score = scoreKeys.length > 0 ? (props[scoreKeys[0]] || 0) : 0;
-  
-  layer.bindPopup(`
-    <div style="font-family: var(--font-sans); color: #c9d1d9;">
-      <strong style="color: #fff;">Bldg: ${props.id || 'N/A'}</strong><br>
-      Subtype: ${props.subtype || 'Residential'}<br>
-      Height: ${(props.height || 0).toFixed(1)}m<br>
-      <hr style="border-color: #30363d; margin: 8px 0;">
-      Zonal Mean: <strong style="color: #58a6ff;">${score.toFixed(3)}</strong>
-    </div>
-  `);
+  const props = feature.properties || {};
+  const rows = Object.entries(props)
+    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([k, v]) =>
+      `<tr><td style="color:#8b949e;padding-right:8px">${escapeHtml(k)}</td>` +
+      `<td>${escapeHtml(v)}</td></tr>`)
+    .join('');
+  layer.bindPopup(
+    `<table style="font:12px var(--font-sans);border-collapse:collapse">${rows}</table>`
+  );
 }
 
 lucide.createIcons();

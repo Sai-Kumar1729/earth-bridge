@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>earth-bridge Studio | Cross-Cloud Spatial Intelligence Platform</title>
-  <meta name="description" content="Production spatial analytics platform bridging Google Earth Engine, Microsoft Planetary Computer STAC, and Overture Maps building footprints.">
+  <title>earth-bridge Studio</title>
+  <meta name="description" content="Find out what Earth observation data exists over a region of interest, across Planetary Computer, NASA GIBS, Earth Engine and Overture Maps.">
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -22,7 +22,7 @@
   <!-- Loading Overlay -->
   <div id="loadingOverlay" class="loading-overlay hidden">
     <div class="spinner"></div>
-    <p id="loadingMessage">Computing spatial indices across region...</p>
+    <p id="loadingMessage">Working...</p>
   </div>
 
   <!-- Error Toast Container -->
@@ -35,14 +35,14 @@
         <div class="logo-icon"><i data-lucide="globe"></i></div>
         <div class="brand-text">
           <h1>earth-bridge <span>Studio</span></h1>
-          <p>Cross-Cloud STAC Engine · GEE · Planetary Computer · Overture Maps</p>
+          <p>Planetary Computer · NASA GIBS · Earth Engine · Overture Maps</p>
         </div>
       </div>
       <div class="header-badges">
         <button id="btnGeeConfig" class="badge badge-gee" title="Click to configure GEE Cloud Project ID">
           <i data-lucide="cpu"></i> GEE: <span id="geeStatusText">Checking...</span>
         </button>
-        <span class="badge badge-mpc"><i data-lucide="cloud"></i> STAC 1.0 COG</span>
+        <span class="badge badge-mpc"><i data-lucide="cloud"></i> STAC 1.0</span>
         <span class="badge badge-overture"><i data-lucide="layers"></i> Building Polygons</span>
       </div>
     </header>
@@ -56,7 +56,7 @@
         </div>
         <div class="modal-body">
           <p style="font-size: 0.85rem; color: var(--text-main);">
-            To execute server-side spatial compute on Google Earth Engine (MODIS TCC, LST Climatology), initialize with your Google Cloud Project ID:
+            Earth Engine computes measured statistics server-side. Without it, only display tiles are available. Enter your Google Cloud project id:
           </p>
           <div class="form-group" style="margin-top: 12px;">
             <label for="geeProjectIdInput">Google Cloud Project ID</label>
@@ -114,7 +114,7 @@
             <!-- Manual Draw View -->
             <div id="roiDrawView" class="roi-view hidden">
               <p style="font-size: 0.76rem; color: var(--text-muted); margin-bottom: 8px; line-height: 1.3;">
-                Draw an area directly on the map canvas for immediate satellite compute:
+                Draw an area on the map to use as the region of interest:
               </p>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
                 <button id="btnDrawRect" class="btn btn-secondary btn-xs"><i data-lucide="square"></i> Rectangle / Box</button>
@@ -161,19 +161,30 @@
           </div>
           <div id="sectionCompute" class="section-body">
             <div class="form-group">
-              <label for="indexSelect">Satellite Product / Climatology</label>
+              <label for="indexSelect">Product</label>
               <select id="indexSelect" class="form-control">
-                <option value="modis_tcc" selected>🌲 MODIS Tree Canopy Cover (MOD44B TCC — 250m)</option>
-                <option value="modis_true_color">🛰️ MODIS True Color Composite (MOD09A1 — 500m)</option>
-                <option value="lst_anomaly">🌡️ LST Anomaly — 10yr Thermal Deviation (GEE)</option>
-                <option value="ndvi">🌿 Sentinel-2 NDVI — Vegetation Health (High-Res Local)</option>
-                <option value="ndwi">💧 Sentinel-2 NDWI — Water Saturation (High-Res Local)</option>
-                <option value="lswi">🌾 Sentinel-2 LSWI — Land Surface Water (High-Res Local)</option>
-                <option value="nbr">🔥 Sentinel-2 NBR — Burn Ratio (High-Res Local)</option>
-                <option value="ndbi">🏢 Sentinel-2 NDBI — Built-up Urban (High-Res Local)</option>
+                <optgroup label="Display tiles — no credentials, no measured values">
+                  <option value="ndvi" selected>MODIS NDVI 250m (MOD13Q1)</option>
+                  <option value="sentinel2">Sentinel-2 true colour 10m</option>
+                  <option value="true_color">MODIS true colour (NASA GIBS)</option>
+                  <option value="lst">MODIS land surface temperature 1km</option>
+                </optgroup>
+                <optgroup label="Measured statistics — requires Earth Engine">
+                  <option value="modis_tcc">Tree canopy cover % (MOD44B 250m)</option>
+                  <option value="lst_anomaly">LST anomaly vs climatology (MOD11A1)</option>
+                  <option value="ndvi_gee">Sentinel-2 NDVI</option>
+                  <option value="ndwi">Sentinel-2 NDWI (water)</option>
+                  <option value="lswi">Sentinel-2 LSWI</option>
+                  <option value="nbr">Sentinel-2 NBR (burn ratio)</option>
+                  <option value="ndbi">Sentinel-2 NDBI (built-up)</option>
+                </optgroup>
               </select>
             </div>
-            <button id="btnRunCompute" class="btn btn-primary btn-full"><i data-lucide="play"></i> Compute & Render Layer</button>
+            <button id="btnRunCompute" class="btn btn-primary btn-full"><i data-lucide="play"></i> Run</button>
+            <p class="muted-note">
+              Tile layers are rendered imagery: colours are a display stretch, not
+              data. Connect Earth Engine for measured values.
+            </p>
           </div>
         </div>
 
@@ -185,19 +196,16 @@
           </div>
           <div id="sectionLayers" class="section-body">
             <!-- Overlays -->
+            <button id="btnFetchBuildings" class="btn btn-secondary btn-sm btn-full">
+              <i data-lucide="building-2"></i> Fetch building footprints
+            </button>
+            <p id="buildingsProvenance" class="muted-note"></p>
             <div class="toggle-control">
               <label class="switch switch-sm">
                 <input type="checkbox" id="overtureToggle" checked>
                 <span class="slider round"></span>
               </label>
-              <span>Building Footprints</span>
-            </div>
-            <div class="toggle-control">
-              <label class="switch switch-sm">
-                <input type="checkbox" id="tilingToggle" checked>
-                <span class="slider round"></span>
-              </label>
-              <span>Sub-Grid Tiling</span>
+              <span>Building footprints</span>
             </div>
 
             <!-- Uploaded Vector Layers -->
@@ -238,19 +246,16 @@
                 <i data-lucide="hard-drive"></i>
                 <span>Parquet</span>
               </button>
-              <button id="btnExportTIFF" class="btn-export" title="Download GeoTIFF raster">
-                <i data-lucide="image"></i>
-                <span>GeoTIFF</span>
-              </button>
-              <button id="btnExportSTAC" class="btn-export" title="Download STAC 1.0 item collection">
+              <button id="btnExportSTAC" class="btn-export" title="Download STAC 1.0 ItemCollection">
                 <i data-lucide="file-json"></i>
                 <span>STAC JSON</span>
               </button>
-              <a id="btnOpenReport" href="./executive_report.html" target="_blank" class="btn-export" title="Open executive analytics HTML report">
-                <i data-lucide="external-link"></i>
-                <span>Report HTML</span>
-              </a>
             </div>
+            <p class="muted-note">
+              Exports contain the vector features currently loaded, with their
+              source and licence attached. Raster export is not available in this
+              release.
+            </p>
           </div>
         </div>
 
@@ -266,48 +271,35 @@
         <!-- Live Compute Results Dashboard -->
         <div class="code-workbench">
           <div class="tab-header">
-            <span class="dashboard-title"><i data-lucide="activity"></i> Zonal Analytics Dashboard</span>
+            <span class="dashboard-title"><i data-lucide="activity"></i> Result</span>
             <span id="computeStatusBadge" class="status-pill status-ready">Ready</span>
           </div>
           <div class="tab-content dashboard-content">
             <div class="stats-grid">
               <div class="stat-card">
-                <span class="stat-label">Index</span>
+                <span class="stat-label">Layer</span>
                 <span class="stat-value" id="statIndexName">—</span>
               </div>
               <div class="stat-card">
-                <span class="stat-label">Raster Mean</span>
+                <span class="stat-label">Mean</span>
                 <span class="stat-value" id="statMean">—</span>
               </div>
               <div class="stat-card">
-                <span class="stat-label">Max / Min</span>
+                <span class="stat-label">Min / max</span>
                 <span class="stat-value" id="statRange">—</span>
               </div>
               <div class="stat-card">
-                <span class="stat-label">Buildings</span>
+                <span class="stat-label">Features loaded</span>
                 <span class="stat-value" id="statBldgCount">—</span>
               </div>
               <div class="stat-card">
-                <span class="stat-label">Data Source</span>
+                <span class="stat-label">Backend</span>
                 <span class="stat-value" id="statProvider">—</span>
               </div>
             </div>
 
-            <div class="table-container">
-              <table class="data-table" id="resultsTable">
-                <thead>
-                  <tr>
-                    <th>Building ID</th>
-                    <th>Subtype</th>
-                    <th>Height</th>
-                    <th>Zonal Mean</th>
-                    <th>Vulnerability</th>
-                  </tr>
-                </thead>
-                <tbody id="tableBody">
-                  <tr><td colspan="5" class="empty-state">Select an index and click "Run Spatial Compute" to begin analysis.</td></tr>
-                </tbody>
-              </table>
+            <div id="provenancePanel" class="provenance-panel">
+              <p class="empty-state">Choose a product and press Run.</p>
             </div>
           </div>
         </div>

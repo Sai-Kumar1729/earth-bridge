@@ -1,220 +1,306 @@
 """
-Executive Visual Map & Policy Report Generator
-===============================================
-Generates standalone, visually stunning interactive HTML map reports tailored for urban planners and policy makers.
+Standalone HTML map export.
+
+Writes a self-contained page with a Leaflet map of a GeoDataFrame, coloured by a
+numeric column, plus the provenance of the underlying data.
+
+What this deliberately does not do: assign risk categories, or recommend
+interventions. Earlier versions labelled buildings "High Risk" and emitted a
+"Policy Recommendation" using fixed cut-offs of 0.3 and 0.6 applied to whatever
+column happened to be found first — the same thresholds for NDVI, for a
+temperature anomaly in degrees Celsius, and for a unitless index. Those
+categories were not meaningful, and presenting them to planners implied a
+validation that had never been done.
+
+The map now classifies by quantiles of the column actually selected, states
+which column that is, and leaves interpretation to the reader.
 """
 
 import os
 import json
+import html
+from typing import Optional, Dict, Any
+
 import geopandas as gpd
+import numpy as np
+from pandas.api.types import is_numeric_dtype
+
+# Inlining the whole GeoJSON into the HTML stops being viable well before this,
+# but a hard cap prevents accidentally writing a several-hundred-megabyte file.
+MAX_INLINE_FEATURES = 20000
+
+QUANTILE_COLORS = ["#2c7bb6", "#abd9e9", "#ffffbf", "#fdae61", "#d7191c"]
+
+
+def _pick_numeric_column(gdf: gpd.GeoDataFrame, preferred: Optional[str] = None) -> Optional[str]:
+    """Choose the column to colour by, preferring an explicit caller choice."""
+    if preferred and preferred in gdf.columns:
+        return preferred
+    for col in gdf.columns:
+        if col == gdf.geometry.name:
+            continue
+        # pandas extension dtypes such as StringDtype raise from np.issubdtype,
+        # so the check has to go through the pandas type API.
+        if is_numeric_dtype(gdf[col]) and gdf[col].notna().any():
+            return col
+    return None
+
+
+def write_map_report(
+    gdf: gpd.GeoDataFrame,
+    title: str = "earth-bridge map export",
+    value_column: Optional[str] = None,
+    output_path: str = "map_report.html",
+) -> str:
+    """Write a self-contained HTML map of `gdf`.
+
+    Args:
+        gdf: Features to map. Must be in EPSG:4326.
+        title: Page heading.
+        value_column: Numeric column to colour by. Auto-selected if omitted.
+        output_path: Destination path.
+
+    Returns:
+        Absolute path to the written file.
+    """
+    if len(gdf) == 0:
+        raise ValueError("Cannot write a map report for an empty GeoDataFrame.")
+    if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs("EPSG:4326")
+
+    truncated = False
+    if len(gdf) > MAX_INLINE_FEATURES:
+        gdf = gdf.iloc[:MAX_INLINE_FEATURES]
+        truncated = True
+
+    column = _pick_numeric_column(gdf, value_column)
+
+    if column is not None:
+        values = gdf[column].dropna()
+        # Quantile breaks describe this dataset only. They are not thresholds
+        # carried over from any external standard.
+        breaks = [float(v) for v in np.nanquantile(values, [0.2, 0.4, 0.6, 0.8])] if len(values) else []
+        summary = {
+            "column": column,
+            "count": int(len(values)),
+            "mean": float(values.mean()) if len(values) else None,
+            "min": float(values.min()) if len(values) else None,
+            "max": float(values.max()) if len(values) else None,
+        }
+    else:
+        breaks = []
+        summary = {"column": None, "count": len(gdf), "mean": None, "min": None, "max": None}
+
+    provenance = gdf.attrs.get("provenance")
+    bounds = gdf.total_bounds.tolist()
+
+    def fmt(v, digits=3):
+        return "—" if v is None else f"{v:.{digits}f}"
+
+    if provenance:
+        prov_rows = "".join(
+            f"<tr><td>{html.escape(str(k))}</td><td>{html.escape(str(v))}</td></tr>"
+            for k, v in provenance.items()
+            if v is not None and k != "requested"
+        )
+        prov_html = f"<table class='prov'>{prov_rows}</table>"
+    else:
+        prov_html = (
+            "<p class='muted'>No provenance recorded for this dataset. "
+            "Data produced by earth-bridge carries provenance in "
+            "<code>gdf.attrs['provenance']</code>.</p>"
+        )
+
+    legend_html = ""
+    if column and breaks:
+        labels = [
+            f"&lt; {breaks[0]:.3g}",
+            f"{breaks[0]:.3g} – {breaks[1]:.3g}",
+            f"{breaks[1]:.3g} – {breaks[2]:.3g}",
+            f"{breaks[2]:.3g} – {breaks[3]:.3g}",
+            f"&ge; {breaks[3]:.3g}",
+        ]
+        items = "".join(
+            f"<div class='legend-item'><span class='swatch' style='background:{c}'></span>{l}</div>"
+            for c, l in zip(QUANTILE_COLORS, labels)
+        )
+        legend_html = (
+            f"<strong>{html.escape(column)}</strong>"
+            f"<div class='muted' style='margin:4px 0 8px'>quintiles of this dataset</div>{items}"
+        )
+
+    payload = {
+        "geojson": json.loads(gdf.to_json()),
+        "column": column,
+        "breaks": breaks,
+        "colors": QUANTILE_COLORS,
+        "bounds": bounds,
+    }
+
+    banner = (
+        f"<div class='banner'>Showing the first {MAX_INLINE_FEATURES:,} of "
+        f"{len(gdf):,}+ features. Export to GeoParquet for the full dataset.</div>"
+        if truncated else ""
+    )
+
+    doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{html.escape(title)}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {{ --bg:#0f172a; --card:#1e293b; --line:#334155; --fg:#f8fafc; --muted:#94a3b8; }}
+  * {{ box-sizing:border-box; margin:0; padding:0; }}
+  body {{ font-family:system-ui,-apple-system,'Segoe UI',sans-serif; background:var(--bg);
+         color:var(--fg); height:100vh; display:flex; flex-direction:column; }}
+  header {{ padding:14px 24px; background:var(--card); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:1.1rem; font-weight:600; }}
+  header p {{ font-size:.78rem; color:var(--muted); margin-top:2px; }}
+  .banner {{ background:#78350f; color:#fed7aa; font-size:.78rem; padding:6px 24px; }}
+  .container {{ display:flex; flex:1; min-height:0; }}
+  aside {{ width:320px; padding:20px; overflow-y:auto; border-right:1px solid var(--line);
+           display:flex; flex-direction:column; gap:16px; }}
+  .card {{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }}
+  .card h2 {{ font-size:.7rem; text-transform:uppercase; letter-spacing:.5px;
+              color:var(--muted); font-weight:600; margin-bottom:8px; }}
+  .metric {{ font-size:1.5rem; font-weight:700; }}
+  .kv {{ display:flex; justify-content:space-between; font-size:.8rem; padding:3px 0; }}
+  .kv span:first-child {{ color:var(--muted); }}
+  .muted {{ color:var(--muted); font-size:.75rem; line-height:1.45; }}
+  table.prov {{ width:100%; border-collapse:collapse; font-size:.72rem; }}
+  table.prov td {{ padding:3px 4px; vertical-align:top; border-bottom:1px solid var(--line); }}
+  table.prov td:first-child {{ color:var(--muted); white-space:nowrap; padding-right:10px; }}
+  #map {{ flex:1; background:#1e293b; }}
+  .legend {{ position:absolute; bottom:24px; right:24px; z-index:1000; background:var(--card);
+             border:1px solid var(--line); border-radius:8px; padding:12px 14px; font-size:.75rem;
+             box-shadow:0 8px 20px rgba(0,0,0,.5); }}
+  .legend-item {{ display:flex; align-items:center; gap:8px; padding:2px 0; }}
+  .swatch {{ width:14px; height:14px; border-radius:3px; display:inline-block; }}
+  .viewport {{ flex:1; position:relative; display:flex; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>{html.escape(title)}</h1>
+  <p>Generated by earth-bridge — descriptive map export, not a validated assessment</p>
+</header>
+{banner}
+<div class="container">
+  <aside>
+    <div class="card">
+      <h2>Features</h2>
+      <div class="metric">{len(gdf):,}</div>
+    </div>
+    <div class="card">
+      <h2>{html.escape(column) if column else 'No numeric column'}</h2>
+      <div class="kv"><span>mean</span><span>{fmt(summary['mean'])}</span></div>
+      <div class="kv"><span>min</span><span>{fmt(summary['min'])}</span></div>
+      <div class="kv"><span>max</span><span>{fmt(summary['max'])}</span></div>
+      <div class="kv"><span>non-null</span><span>{summary['count']:,}</span></div>
+    </div>
+    <div class="card">
+      <h2>Data provenance</h2>
+      {prov_html}
+    </div>
+    <div class="card">
+      <h2>Reading this map</h2>
+      <p class="muted">Colours are quintiles of <code>{html.escape(column) if column else 'n/a'}</code>
+      within this dataset. They are relative to these features only and carry no
+      external threshold or standard. No suitability, risk or priority judgement
+      is implied.</p>
+    </div>
+  </aside>
+  <div class="viewport">
+    <div id="map"></div>
+    {f'<div class="legend">{legend_html}</div>' if legend_html else ''}
+  </div>
+</div>
+<script>
+const DATA = {json.dumps(payload)};
+const map = L.map('map');
+L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO', subdomains:'abcd'
+}}).addTo(map);
+
+function colorFor(v) {{
+  if (v === null || v === undefined || DATA.breaks.length === 0) return '#64748b';
+  for (let i = 0; i < DATA.breaks.length; i++) if (v < DATA.breaks[i]) return DATA.colors[i];
+  return DATA.colors[DATA.colors.length - 1];
+}}
+
+const layer = L.geoJSON(DATA.geojson, {{
+  style: f => {{
+    const c = colorFor(DATA.column ? f.properties[DATA.column] : null);
+    return {{ color:c, weight:1, fillColor:c, fillOpacity:0.65 }};
+  }},
+  pointToLayer: (f, latlng) => L.circleMarker(latlng, {{ radius:5 }}),
+  onEachFeature: (f, lyr) => {{
+    const rows = Object.entries(f.properties)
+      .map(([k, v]) => `<tr><td style="color:#64748b;padding-right:8px">${{k}}</td><td>${{v}}</td></tr>`)
+      .join('');
+    lyr.bindPopup(`<table style="font:12px system-ui;border-collapse:collapse">${{rows}}</table>`);
+  }}
+}}).addTo(map);
+
+const b = DATA.bounds;
+map.fitBounds([[b[1], b[0]], [b[3], b[2]]]);
+</script>
+</body>
+</html>"""
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(doc)
+    return os.path.abspath(output_path)
+
+
+def generate_policy_report(
+    enriched_gdf: Optional[gpd.GeoDataFrame] = None,
+    city_name: str = "Analysis Region",
+    output_filepath: str = "map_report.html",
+    *,
+    gdf: Optional[gpd.GeoDataFrame] = None,
+    output_path: Optional[str] = None,
+    value_column: Optional[str] = None,
+) -> str:
+    """Deprecated alias for `write_map_report`.
+
+    Accepts both the old positional names (`enriched_gdf`, `output_filepath`) and
+    the keyword names the top-level `eb.report()` was passing (`gdf`,
+    `output_path`), which previously raised TypeError.
+    """
+    frame = gdf if gdf is not None else enriched_gdf
+    if frame is None:
+        raise TypeError("generate_policy_report requires a GeoDataFrame.")
+    return write_map_report(
+        frame,
+        title=city_name,
+        value_column=value_column,
+        output_path=output_path or output_filepath,
+    )
+
 
 class PolicyReportGenerator:
-    """Generates executive visual spatial reports for city mayors, urban planners, and policy makers."""
+    """Deprecated. Use `write_map_report`."""
 
     @staticmethod
     def generate_executive_html_report(
         enriched_gdf: gpd.GeoDataFrame,
         city_name: str = "Analysis Region",
-        index_name: str = "Greenery & Microclimate Score",
-        output_filepath: str = "executive_report.html"
+        index_name: str = "",
+        output_filepath: str = "map_report.html",
     ) -> str:
-        """Creates a standalone, beautiful HTML interactive spatial dashboard file."""
-        total_bldgs = len(enriched_gdf)
-        
-        # Try to find a score column dynamically for python-side summary stats
-        scores = []
-        score_col = None
-        for col in enriched_gdf.columns:
-            if '_mean' in col or 'index' in col or 'score' in col:
-                score_col = col
-                scores = enriched_gdf[col].dropna()
-                break
-                
-        if len(scores) > 0:
-            mean_score = float(scores.mean())
-            high_risk_count = int((scores < 0.3).sum())
-            moderate_count = int(((scores >= 0.3) & (scores < 0.6)).sum())
-            optimal_count = int((scores >= 0.6).sum())
-        else:
-            mean_score = 0.5
-            high_risk_count = 0
-            moderate_count = total_bldgs
-            optimal_count = 0
+        return write_map_report(
+            enriched_gdf, title=city_name,
+            value_column=index_name or None, output_path=output_filepath,
+        )
 
-        geojson_str = enriched_gdf.to_json()
 
-        html_content = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{city_name} Urban Policy & Climate Report</title>
-  
-  <!-- Leaflet CSS & Fonts -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  
-  <style>
-    :root {{
-      --bg-dark: #0f172a;
-      --bg-card: #1e293b;
-      --border-color: #334155;
-      --text-bright: #f8fafc;
-      --text-muted: #94a3b8;
-      --accent-green: #22c55e;
-      --accent-yellow: #eab308;
-      --accent-red: #ef4444;
-    }}
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{ font-family: 'Inter', sans-serif; background-color: var(--bg-dark); color: var(--text-bright); height: 100vh; display: flex; flex-direction: column; }}
-    
-    header {{ height: 70px; background-color: var(--bg-card); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; }}
-    header h1 {{ font-size: 1.25rem; font-weight: 700; color: #fff; }}
-    header h1 span {{ color: #38bdf8; font-weight: 400; }}
-    .subtitle {{ font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }}
-    
-    .container {{ display: flex; flex: 1; height: calc(100vh - 70px); }}
-    
-    .executive-summary {{ width: 360px; background-color: #0f172a; border-right: 1px solid var(--border-color); padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }}
-    
-    .metric-card {{ background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px; }}
-    .metric-title {{ font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; }}
-    .metric-value {{ font-size: 1.8rem; font-weight: 700; color: #fff; }}
-    
-    .breakdown-list {{ display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }}
-    .breakdown-item {{ display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding: 8px 12px; border-radius: 6px; background-color: rgba(255,255,255,0.03); }}
-    .status-red {{ border-left: 4px solid var(--accent-red); }}
-    .status-yellow {{ border-left: 4px solid var(--accent-yellow); }}
-    .status-green {{ border-left: 4px solid var(--accent-green); }}
-
-    .map-section {{ flex: 1; position: relative; }}
-    #map {{ width: 100%; height: 100%; background-color: #1e293b; z-index: 1; }}
-
-    .legend {{ position: absolute; bottom: 30px; right: 30px; z-index: 1000; background: var(--bg-card); padding: 14px 18px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 0.8rem; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
-    .legend-item {{ display: flex; align-items: center; gap: 10px; }}
-    .color-box {{ width: 14px; height: 14px; border-radius: 3px; }}
-  </style>
-</head>
-<body>
-  <header>
-    <div>
-      <h1>{city_name} Urban Policy & Microclimate Report <span>| Executive Dashboard</span></h1>
-      <p class="subtitle">Powered by earth-bridge & Overture Building Intelligence</p>
-    </div>
-    <button onclick="window.print()" style="background: #0284c7; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">Print / Save PDF</button>
-  </header>
-
-  <div class="container">
-    <aside class="executive-summary">
-      <div class="metric-card">
-        <span class="metric-title">Target Region</span>
-        <span class="metric-value">{city_name}</span>
-      </div>
-
-      <div class="metric-card">
-        <span class="metric-title">Average {index_name}</span>
-        <span class="metric-value" style="color: #38bdf8;">{mean_score:.3f}</span>
-      </div>
-
-      <div class="metric-card">
-        <span class="metric-title">Building Vulnerability Breakdown</span>
-        <div class="breakdown-list">
-          <div class="breakdown-item status-red">
-            <span>High Risk / Deficit (&lt; 0.30)</span>
-            <strong>{high_risk_count} buildings</strong>
-          </div>
-          <div class="breakdown-item status-yellow">
-            <span>Moderate (0.30 - 0.60)</span>
-            <strong>{moderate_count} buildings</strong>
-          </div>
-          <div class="breakdown-item status-green">
-            <span>Optimal (&gt; 0.60)</span>
-            <strong>{optimal_count} buildings</strong>
-          </div>
-        </div>
-      </div>
-
-      <div class="metric-card">
-        <span class="metric-title">Policy Recommendation</span>
-        <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.5; margin-top: 4px;">
-          Prioritize targeted interventions (e.g., tree canopy planting, cool roof retrofits) for red-coded building blocks in urban dense sectors.
-        </p>
-      </div>
-    </aside>
-
-    <section class="map-section">
-      <div id="map"></div>
-
-      <div class="legend">
-        <strong>Building Vulnerability Index</strong>
-        <div class="legend-item"><div class="color-box" style="background: #ef4444;"></div> High Vulnerability / Low Greenery (&lt; 0.30)</div>
-        <div class="legend-item"><div class="color-box" style="background: #eab308;"></div> Moderate Greenery / Heat Risk (0.30 - 0.60)</div>
-        <div class="legend-item"><div class="color-box" style="background: #22c55e;"></div> High Canopy / Cool Microclimate (&gt; 0.60)</div>
-      </div>
-    </section>
-  </div>
-
-  <script>
-    const map = L.map('map').setView([17.3850, 78.4867], 13);
-
-    L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-    }}).addTo(map);
-
-    const geoData = {geojson_str};
-
-    const geoLayer = L.geoJSON(geoData, {{
-      style: function(feature) {{
-        const props = feature.properties;
-        const scoreKeys = Object.keys(props).filter(k => k.includes('_mean') || k.includes('score') || k.includes('index'));
-        const score = scoreKeys.length > 0 ? (props[scoreKeys[0]] || 0.5) : 0.5;
-        
-        let color = '#eab308';
-        if (score < 0.3) color = '#ef4444';
-        else if (score >= 0.6) color = '#22c55e';
-
-        return {{
-          color: color,
-          weight: 1,
-          fillColor: color,
-          fillOpacity: 0.6
-        }};
-      }},
-      onEachFeature: function(feature, layer) {{
-        const props = feature.properties;
-        const scoreKeys = Object.keys(props).filter(k => k.includes('_mean') || k.includes('score') || k.includes('index'));
-        const score = scoreKeys.length > 0 ? (props[scoreKeys[0]] || 0.5) : 0.5;
-        
-        layer.bindPopup(`
-          <div style="font-family: sans-serif; font-size: 13px; color: #1e293b;">
-            <strong style="color: #0f172a;">Building ID: ${{props.id || 'N/A'}}</strong><br>
-            Subtype: ${{props.subtype || 'residential'}}<br>
-            Height: ${{props.height || 12}} meters<br>
-            <hr style="margin: 6px 0; border: none; border-top: 1px solid #cbd5e1;">
-            Microclimate Score: <strong style="color: ${{score < 0.3 ? '#ef4444' : (score > 0.6 ? '#22c55e' : '#d97706')}};">${{score.toFixed(3)}}</strong>
-          </div>
-        `);
-      }}
-    }}).addTo(map);
-
-    if (geoLayer.getBounds().isValid()) {{
-      map.fitBounds(geoLayer.getBounds());
-    }}
-  </script>
-</body>
-</html>"""
-
-        with open(output_filepath, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        return os.path.abspath(output_filepath)
-
-# Aliases to consolidate previous duplicated modules
 class ExecutiveReportEngine(PolicyReportGenerator):
-    @staticmethod
-    def generate_report(gdf: gpd.GeoDataFrame, output_path: str = "report.html") -> str:
-        return PolicyReportGenerator.generate_executive_html_report(gdf, output_filepath=output_path)
+    """Deprecated. Use `write_map_report`."""
 
-def generate_policy_report(enriched_gdf: gpd.GeoDataFrame, city_name: str = "Analysis Region", output_filepath: str = "executive_report.html") -> str:
-    return PolicyReportGenerator.generate_executive_html_report(enriched_gdf, city_name=city_name, output_filepath=output_filepath)
+    @staticmethod
+    def generate_report(gdf: gpd.GeoDataFrame, output_path: str = "map_report.html") -> str:
+        return write_map_report(gdf, output_path=output_path)

@@ -1,7 +1,8 @@
 """
-Open Dataset Exporter Module
-============================
-Exports enriched spatial datasets to GeoJSON, Parquet (HuggingFace compatible), CSV, and STAC Item Collections.
+Write GeoDataFrames to GeoJSON, GeoParquet, CSV, or a STAC ItemCollection.
+
+Where a dataset carries provenance in `gdf.attrs["provenance"]`, the source and
+licence travel with the export rather than being dropped at the file boundary.
 """
 
 from typing import Dict, Any, List, Optional
@@ -10,7 +11,7 @@ import json
 import geopandas as gpd
 
 class OpenDatasetExporter:
-    """Exports processed spatial datasets into community-standard open dataset formats."""
+    """Writes GeoDataFrames to open, widely-readable formats."""
 
     @staticmethod
     def export_geojson(gdf: gpd.GeoDataFrame, output_path: str) -> str:
@@ -20,30 +21,46 @@ class OpenDatasetExporter:
 
     @staticmethod
     def export_parquet(gdf: gpd.GeoDataFrame, output_path: str) -> str:
-        """Exports GeoPandas DataFrame to Cloud-Native GeoParquet (HuggingFace compatible)."""
+        """Exports a GeoDataFrame to GeoParquet.
+
+        Raises if pyarrow is unavailable rather than silently writing GeoJSON to
+        a different path, which left callers holding a file that was not the
+        format or the location they asked for.
+        """
         try:
             gdf.to_parquet(output_path)
-        except Exception:
-            # Fallback if pyarrow is not present
-            gdf.to_file(output_path.replace(".parquet", ".geojson"), driver="GeoJSON")
-            return os.path.abspath(output_path.replace(".parquet", ".geojson"))
+        except ImportError as e:
+            raise ImportError(
+                "Writing GeoParquet requires pyarrow. Install it with "
+                "'pip install pyarrow', or export as geojson instead."
+            ) from e
         return os.path.abspath(output_path)
 
     @staticmethod
     def export_csv(gdf: gpd.GeoDataFrame, output_path: str) -> str:
-        """Exports GeoPandas DataFrame to CSV with centroid coordinates."""
-        # Create a copy to avoid mutating the original
+        """Exports a GeoDataFrame to CSV with centroid coordinates.
+
+        Centroids are computed in an equal-area projection and converted back to
+        EPSG:4326. Taking a centroid directly in degrees treats latitude and
+        longitude as a flat plane, which displaces the result away from the
+        equator.
+        """
         df = gdf.copy()
-        
-        # Add centroid coordinates if geometry column exists
-        if df.geometry.notnull().any():
-            centroids = df.geometry.centroid
-            df['centroid_lon'] = centroids.x
-            df['centroid_lat'] = centroids.y
-            
-        # Drop the complex geometry column for CSV export
-        df = df.drop(columns=['geometry'])
-        
+
+        if len(df) and df.geometry.notna().any():
+            source_crs = df.crs or "EPSG:4326"
+            # World Equal Area Cylindrical; adequate for centroid placement at
+            # any latitude and defined globally.
+            centroids = df.geometry.to_crs("EPSG:6933").centroid.to_crs(source_crs)
+            df["centroid_lon"] = centroids.x
+            df["centroid_lat"] = centroids.y
+
+        provenance = gdf.attrs.get("provenance")
+        if provenance:
+            df["_source"] = provenance.get("backend")
+            df["_license"] = provenance.get("license")
+
+        df = df.drop(columns=[gdf.geometry.name])
         df.to_csv(output_path, index=False)
         return os.path.abspath(output_path)
 

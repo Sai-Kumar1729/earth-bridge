@@ -1,8 +1,15 @@
 """
-Spectral Index Calculator Module
-=================================
-Fast, memory-efficient calculation of satellite spectral indices for Sentinel-2, Landsat, MODIS, and local GeoTIFFs.
-Supports NumPy arrays, GeoPandas DataFrames, Xarray DataArrays, and GEE Expressions.
+Normalised-difference spectral indices over NumPy arrays.
+
+Each function takes two reflectance arrays and returns (a - b) / (a + b). Inputs
+must already be surface reflectance: no scaling, offset or cloud masking is
+applied here. `STACBackend` handles that when it reads bands.
+
+NumPy arrays only. An earlier version of this docstring also claimed support for
+GeoPandas, Xarray and Earth Engine expressions; none of that was implemented.
+
+For a comprehensive, citation-backed index catalogue, see spyndex
+(https://github.com/awesome-spectral-indices/spyndex), which covers 200+ indices.
 """
 
 from typing import Union, Dict, Any, Optional
