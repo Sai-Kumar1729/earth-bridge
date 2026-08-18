@@ -10,8 +10,9 @@ Overture Maps, from one Python API and a local browser workbench.
 
 > **Alpha.** This is a reconnaissance tool: it answers *what data is here and what
 > does it look like*, not *what is the value*. Measured statistics currently
-> require Google Earth Engine. See [Scope and limits](#scope-and-limits) before
-> depending on it for anything.
+> require Google Earth Engine. Read [Scope and limits](#scope-and-limits) before
+> depending on it for anything, and [ROADMAP.md](ROADMAP.md) for what is being
+> built next and what has been ruled out.
 
 ---
 
@@ -143,9 +144,10 @@ Read this before relying on the output.
 - **No zonal statistics.** Removed in 0.3.0 — the previous implementation
   sampled a 3×3 window at each polygon centroid and called it exact. Use
   [`exactextract`](https://github.com/isciences/exactextract), or Earth Engine's
-  `reduceRegions`.
+  `reduceRegions`. Returning correctly is targeted for 0.4.0.
 - **No raster export.** The GeoTIFF export was removed: it wrote random noise.
-- **No time series.** Single composites only.
+  It will not return until there is a real raster to export.
+- **No time series.** Single composites only. Targeted for 0.5.0.
 - **Tiles are imagery.** Colours are a display stretch. Do not sample them.
 - **Degree tiles are not equal area.** 0.1° is ~11 km at the equator, ~7 km at
   50°N. Each tile reports its own `approx_km`.
@@ -185,6 +187,24 @@ capable, and often the right answer:
 - [`spyndex`](https://github.com/awesome-spectral-indices/spyndex) — 200+ cited spectral indices
 - [`exactextract`](https://github.com/isciences/exactextract) — exact zonal statistics
 - [`overturemaps`](https://github.com/OvertureMaps/overturemaps-py) — official Overture CLI
+
+## Roadmap
+
+[ROADMAP.md](ROADMAP.md) tracks the whole plan as a checklist, including the
+things deliberately ruled out.
+
+- **0.3.0 — honesty** *(done)*. Removed everything that returned invented
+  numbers, gave every result a provenance record, and made the documented API
+  run.
+- **0.4.0 — usefulness** *(next)*. Sign Planetary Computer assets so the COG
+  reader works, and you get measured NDVI over any region on Earth with no
+  credentials at all. Plus recorded-fixture tests, CI, and real zonal statistics
+  via `exactextract`.
+- **0.5.0 — scale.** Pluggable backends, xarray output, time series, and the
+  tile partitioner wired to an executor.
+- **1.0.0 — the actual claim.** The same measurement computed through
+  independent backends and reported *with its disagreement* — where Earth
+  Engine, Planetary Computer and openEO differ over one region, and why.
 
 ## Changelog
 

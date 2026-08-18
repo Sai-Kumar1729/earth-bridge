@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "earth-bridge"
 version = "0.3.0"
-description = "Define a region of interest and see what Earth observation data exists over it, across Google Earth Engine, Microsoft Planetary Computer and Overture Maps."
+description = "One API over Google Earth Engine, Microsoft Planetary Computer, NASA GIBS and Overture Maps, where every result records its source and licence."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Sai Kumar", email = "saikumarkummari1729@gmail.com" }]
@@ -65,3 +65,4 @@ earthbridge = "earthbridge.cli:main"
 Homepage = "https://github.com/Sai-Kumar1729/earth-bridge"
 Repository = "https://github.com/Sai-Kumar1729/earth-bridge"
 Changelog = "https://github.com/Sai-Kumar1729/earth-bridge/blob/main/CHANGELOG.md"
+Roadmap = "https://github.com/Sai-Kumar1729/earth-bridge/blob/main/ROADMAP.md"

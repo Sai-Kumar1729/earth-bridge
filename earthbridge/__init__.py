@@ -33,6 +33,9 @@ scene, date and licence it came from.
 
     # Launch the interactive Studio in a browser
     eb.studio()
+
+Planned work, and the capabilities deliberately ruled out, are tracked in
+ROADMAP.md at the repository root.
 """
 
 __version__ = "0.3.0"

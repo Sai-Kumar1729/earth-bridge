@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+Planned work is tracked as a checklist in [ROADMAP.md](ROADMAP.md), including
+the capabilities that have been ruled out and why. The next release, 0.4.0,
+signs Planetary Computer assets so the COG reader works — measured values over
+any region with no credentials — and adds recorded-fixture tests and CI.
+
 ## 0.3.0 — Correctness release
 
 This release removes capabilities. Several features returned numbers that were
